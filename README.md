@@ -236,7 +236,7 @@ The Anthropic integration includes:
 
 ### Environment Variables
 
-Key environment variables in your `.env` file:
+Key environment variables in your `.env` file, please check `.env.example`:
 
 ```
 # Server settings
@@ -249,6 +249,12 @@ DATABASE_URL=postgresql://user:password@localhost:5432/forge
 # Security
 API_KEY_ENCRYPTION_KEY=your_generated_key
 JWT_SECRET_KEY=your_generated_key
+# Secret key for signing JWTs. Generate a strong, random key.
+# Use `openssl rand -hex 32` to generate a key.
+SECRET_KEY=
+# Secret key for encrypting sensitive data like provider API keys.
+# Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+ENCRYPTION_KEY=
 ```
 
 ### Model Mapping
