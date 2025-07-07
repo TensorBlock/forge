@@ -8,7 +8,11 @@ set -e
 chown -R nobody:nogroup /app/logs
 
 # Run Alembic migrations
-alembic upgrade head
+echo "Running database migrations..."
+if ! alembic upgrade head; then
+  echo "⚠️ Warning: Alembic migration failed. Continuing without shutdown."
+fi
 
 # Use gosu to drop from root to the 'nobody' user and run the main command
 exec gosu nobody "$@"
+
