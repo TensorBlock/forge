@@ -19,27 +19,23 @@ ENV FORGE_DEBUG_LOGGING=${ARG_DEBUG_LOGGING}
 # Install system dependencies including PostgreSQL client and gosu for user privilege management
 RUN apt-get update && apt-get install -y \
     postgresql-client \
-    gosu \
     && rm -rf /var/lib/apt/lists/*
 
-# Create logs directory
-RUN mkdir -p /app/logs
+RUN mkdir -p /app/logs && \
+    chown -R nobody:nogroup /app/logs && \
+    chmod -R 777 /app/logs
 
 # Copy project files
 COPY . .
 
-# Copy entrypoint script and make it executable
-COPY docker-entrypoint.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
-
 # Install dependencies using pip
-RUN pip install -e ".[dev]"
+RUN pip install -e .
+
+# Switch to non-root user for security
+USER nobody
 
 # Expose port
 EXPOSE 8000
-
-# Set the entrypoint to our script
-ENTRYPOINT ["docker-entrypoint.sh"]
 
 # Run the application (this command is passed to the entrypoint)
 CMD ["gunicorn", "app.main:app", "-k", "uvicorn.workers.UvicornWorker", "--workers", "10", "--bind", "0.0.0.0:8000"]
