@@ -1,0 +1,38 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://forge:forge@db:5432/forge
+      - PORT=8000
+      - DEBUG_CACHE=false  # Control cache debugging
+      - FORGE_DEBUG_LOGGING=false  # Control application logging level
+    depends_on:
+      - db
+    volumes:
+      - .:/app
+      - forge_logs:/app/logs  # Persist logs
+    networks:
+      - forge-network
+
+  db:
+    image: postgres:14
+    environment:
+      - POSTGRES_USER=forge
+      - POSTGRES_PASSWORD=forge
+      - POSTGRES_DB=forge
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - forge-network
+
+volumes:
+  postgres_data:
+  forge_logs:  # Add volume for logs
+
+networks:
+  forge-network:
+    driver: bridge

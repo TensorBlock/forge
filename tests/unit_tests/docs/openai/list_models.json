@@ -1,0 +1,59 @@
+{
+    "object": "list",
+    "data": [
+        {
+            "id": "gpt-4-0613",
+            "object": "model",
+            "created": 1686588896,
+            "owned_by": "openai"
+        },
+        {
+            "id": "gpt-4",
+            "object": "model",
+            "created": 1687882411,
+            "owned_by": "openai"
+        },
+        {
+            "id": "gpt-3.5-turbo",
+            "object": "model",
+            "created": 1677610602,
+            "owned_by": "openai"
+        },
+        {
+            "id": "o4-mini-deep-research",
+            "object": "model",
+            "created": 1749685485,
+            "owned_by": "system"
+        },
+        {
+            "id": "o3-deep-research",
+            "object": "model",
+            "created": 1749840121,
+            "owned_by": "system"
+        },
+        {
+            "id": "davinci-002",
+            "object": "model",
+            "created": 1692634301,
+            "owned_by": "system"
+        },
+        {
+            "id": "dall-e-3",
+            "object": "model",
+            "created": 1698785189,
+            "owned_by": "system"
+        },
+        {
+            "id": "dall-e-2",
+            "object": "model",
+            "created": 1698798177,
+            "owned_by": "system"
+        },
+        {
+            "id": "gpt-3.5-turbo-1106",
+            "object": "model",
+            "created": 1698959748,
+            "owned_by": "system"
+        }
+    ]
+}

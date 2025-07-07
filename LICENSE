@@ -1,0 +1,54 @@
+TensorBlock Forge is licensed under the Apache License, Version 2.0. In addition to the standard terms of the Apache License 2.0, your use of TensorBlock Forge is subject to the following Supplemental Terms:
+
+-------------------------------------------------------------------------------
+1. Commercial Use Restrictions
+-------------------------------------------------------------------------------
+
+The standard open-source license granted under Apache 2.0 does not apply to the following categories of usage. If you intend to use TensorBlock Forge in any of the following ways, you must obtain prior written commercial authorization from the TensorBlock team:
+
+1. Modifications and Derivative Works  
+   Use of modified versions of TensorBlock Forge or derivative works thereof, including but not limited to changes to application branding, codebase, features, user interface, or data structures, for commercial purposes.
+
+2. Enterprise Deployment  
+   Use of TensorBlock Forge within a commercial organization or in services provided to third-party enterprise clients.
+
+3. Public Cloud-Based Services  
+   Operation of public cloud services built upon TensorBlock Forge (e.g., SaaS platforms, hosted APIs, multi-tenant web services) accessible to general users.
+
+4. Bundled Distribution with Hardware  
+   Distribution of TensorBlock Forge bundled, integrated, or pre-installed on hardware products intended for commercial sale.
+
+-------------------------------------------------------------------------------
+2. Contributor Agreement
+-------------------------------------------------------------------------------
+
+By contributing to TensorBlock Forge in the form of code, documentation, or other assets, you acknowledge and agree to the following terms:
+
+1. Right to Re-License  
+   You grant the maintainers of TensorBlock Forge a perpetual, irrevocable, worldwide, non-exclusive license to use, reproduce, modify, sublicense, and distribute your contributions under both open-source and commercial licenses.
+
+2. Commercial Use of Contributions  
+   Your contributions may be incorporated into commercial versions of TensorBlock Forge or other related products offered by the TensorBlock team, including but not limited to proprietary deployments, enterprise features, and hosted services.
+
+3. License Policy Adjustments  
+   TensorBlock reserves the right to modify the licensing structure of TensorBlock Forge in the future, in accordance with project governance and development objectives. Any such change shall not affect your rights under the version of the license in effect at the time of your contribution, unless explicitly agreed otherwise.
+
+-------------------------------------------------------------------------------
+3. General Provisions
+-------------------------------------------------------------------------------
+
+1. Interpretation  
+   The interpretation and enforcement of these Supplemental Terms shall be at the sole discretion of the TensorBlock development team.
+
+2. Amendments  
+   These Supplemental Terms may be updated from time to time to reflect changes in project governance, usage scenarios, or business needs. Updates will be communicated via the software interface or official project communication channels. Continued use of the software after such notice constitutes acceptance of the updated terms.
+
+-------------------------------------------------------------------------------
+Except as explicitly modified by these Supplemental Terms, all other rights and obligations regarding your use of TensorBlock Forge are governed by the Apache License, Version 2.0.
+
+You may access the full Apache 2.0 license text at:
+http://www.apache.org/licenses/LICENSE-2.0
+
+For commercial licensing inquiries, please contact the TensorBlock team at:
+contact@tensorblock.co
+-------------------------------------------------------------------------------

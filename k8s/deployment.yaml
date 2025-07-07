@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: forge-app
+  labels:
+    app: forge
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: forge
+  template:
+    metadata:
+      labels:
+        app: forge
+    spec:
+      containers:
+      - name: forge
+        image: tensorblockai/forge:latest
+        ports:
+        - containerPort: 8000
+        envFrom:
+        - secretRef:
+            name: forge-secrets
+        env:
+        - name: PORT
+          value: "8000"
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 5

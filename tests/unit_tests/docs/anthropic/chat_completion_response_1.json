@@ -1,0 +1,21 @@
+{
+    "id": "msg_01Kpzcjm6jUdJ5RY5Dxt3rV8",
+    "type": "message",
+    "role": "assistant",
+    "model": "claude-sonnet-4-20250514",
+    "content": [
+        {
+            "type": "text",
+            "text": "Hello! I'm doing well, thank you for asking. I'm here and ready to help with whatever you'd like to discuss or work on. How are you doing today?"
+        }
+    ],
+    "stop_reason": "end_turn",
+    "stop_sequence": null,
+    "usage": {
+        "input_tokens": 13,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "output_tokens": 39,
+        "service_tier": "standard"
+    }
+}

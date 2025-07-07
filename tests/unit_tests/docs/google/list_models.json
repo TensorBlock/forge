@@ -1,0 +1,80 @@
+{
+    "models": [
+        {
+            "name": "models/embedding-gecko-001",
+            "version": "001",
+            "displayName": "Embedding Gecko",
+            "description": "Obtain a distributed representation of a text.",
+            "inputTokenLimit": 1024,
+            "outputTokenLimit": 1,
+            "supportedGenerationMethods": [
+                "embedText",
+                "countTextTokens"
+            ]
+        },
+        {
+            "name": "models/gemini-1.0-pro-vision-latest",
+            "version": "001",
+            "displayName": "Gemini 1.0 Pro Vision",
+            "description": "The original Gemini 1.0 Pro Vision model version which was optimized for image understanding. Gemini 1.0 Pro Vision was deprecated on July 12, 2024. Move to a newer Gemini version.",
+            "inputTokenLimit": 12288,
+            "outputTokenLimit": 4096,
+            "supportedGenerationMethods": [
+                "generateContent",
+                "countTokens"
+            ],
+            "temperature": 0.4,
+            "topP": 1,
+            "topK": 32
+        },
+        {
+            "name": "models/gemini-pro-vision",
+            "version": "001",
+            "displayName": "Gemini 1.0 Pro Vision",
+            "description": "The original Gemini 1.0 Pro Vision model version which was optimized for image understanding. Gemini 1.0 Pro Vision was deprecated on July 12, 2024. Move to a newer Gemini version.",
+            "inputTokenLimit": 12288,
+            "outputTokenLimit": 4096,
+            "supportedGenerationMethods": [
+                "generateContent",
+                "countTokens"
+            ],
+            "temperature": 0.4,
+            "topP": 1,
+            "topK": 32
+        },
+        {
+            "name": "models/gemini-1.5-pro-latest",
+            "version": "001",
+            "displayName": "Gemini 1.5 Pro Latest",
+            "description": "Alias that points to the most recent production (non-experimental) release of Gemini 1.5 Pro, our mid-size multimodal model that supports up to 2 million tokens.",
+            "inputTokenLimit": 2000000,
+            "outputTokenLimit": 8192,
+            "supportedGenerationMethods": [
+                "generateContent",
+                "countTokens"
+            ],
+            "temperature": 1,
+            "topP": 0.95,
+            "topK": 40,
+            "maxTemperature": 2
+        },
+        {
+            "name": "models/gemini-1.5-pro-002",
+            "version": "002",
+            "displayName": "Gemini 1.5 Pro 002",
+            "description": "Stable version of Gemini 1.5 Pro, our mid-size multimodal model that supports up to 2 million tokens, released in September of 2024.",
+            "inputTokenLimit": 2000000,
+            "outputTokenLimit": 8192,
+            "supportedGenerationMethods": [
+                "generateContent",
+                "countTokens",
+                "createCachedContent"
+            ],
+            "temperature": 1,
+            "topP": 0.95,
+            "topK": 40,
+            "maxTemperature": 2
+        }
+    ],
+    "nextPageToken": "Chltb2RlbHMvZ2VtaW5pLTEuNS1wcm8tMDAy"
+}

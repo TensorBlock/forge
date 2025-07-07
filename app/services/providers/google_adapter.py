@@ -1,0 +1,635 @@
+import asyncio
+import json
+import os
+import time
+import uuid
+from collections.abc import AsyncGenerator
+from http import HTTPStatus
+from typing import Any
+
+import aiohttp
+
+from app.core.logger import get_logger
+
+from .base import ProviderAdapter
+
+# Configure logging
+logger = get_logger(name="google_adapter")
+
+
+class GoogleAdapter(ProviderAdapter):
+    def __init__(
+        self,
+        provider_name: str,
+        base_url: str,
+        config: dict[str, Any],
+    ):
+        self._provider_name = provider_name
+        self._base_url = base_url
+
+    @property
+    def provider_name(self) -> str:
+        return self._provider_name
+
+    @property
+    def model_mapping(self) -> dict[str, str]:
+        return self.GOOGLE_MODEL_MAPPING
+
+    def get_mapped_model(self, model: str) -> str:
+        """Get the Google-specific model name"""
+        return self.GOOGLE_MODEL_MAPPING.get(model, model)
+
+    async def list_models(self, api_key: str) -> list[str]:
+        """List all models (verbosely) supported by the provider"""
+        # Check cache first
+        cached_models = self.get_cached_models(api_key, self._base_url)
+        if cached_models is not None:
+            return cached_models
+
+        # If not in cache, make API call
+        url = f"{self._base_url}/models"
+
+        async with (
+            aiohttp.ClientSession() as session,
+            session.get(url, params={"pageSize": 100, "key": api_key}) as response,
+        ):
+            if response.status != HTTPStatus.OK:
+                error_text = await response.text()
+                raise ValueError(f"Google API error: {error_text}")
+            resp = await response.json()
+            self.GOOGLE_MODEL_MAPPING = {
+                d["displayName"]: d["name"] for d in resp["models"]
+            }
+            models = [d["name"] for d in resp["models"]]
+
+            # Cache the results
+            self.cache_models(api_key, self._base_url, models)
+
+            return models
+
+    @staticmethod
+    async def upload_file_to_gemini(
+        session: aiohttp.ClientSession,
+        file_url: str,
+        api_key: str,
+        display_name: str | None = None,
+    ) -> str:
+        """
+        Upload a file to Google Gemini API using a file URL.
+        Uses streaming to handle large files efficiently.
+
+        Args:
+            session: aiohttp ClientSession
+            file_url: URL of the file to upload
+            api_key: Google Gemini API key
+            display_name: Optional display name for the file
+
+        Returns:
+            dict: Response from the API containing file information
+        """
+        base_url = "https://generativelanguage.googleapis.com/upload/v1beta/files"
+        # First, get the file metadata from the URL
+        async with session.head(file_url) as response:
+            if response.status != HTTPStatus.OK:
+                raise Exception(
+                    f"Gemini Upload API error: Failed to fetch file metadata from URL: {response.status}"
+                )
+
+            mime_type = response.headers.get("Content-Type", "application/octet-stream")
+            file_size = int(response.headers.get("Content-Length", 0))
+
+        # Prepare the initial request for resumable upload
+        headers = {
+            "X-Goog-Upload-Protocol": "resumable",
+            "X-Goog-Upload-Command": "start",
+            "X-Goog-Upload-Header-Content-Length": str(file_size),
+            "X-Goog-Upload-Header-Content-Type": mime_type,
+            "Content-Type": "application/json",
+        }
+
+        # Initial request to get upload URL
+        metadata = {
+            "file": {"display_name": display_name or os.path.basename(file_url)}
+        }
+
+        async with session.post(
+            f"{base_url}?key={api_key}", headers=headers, json=metadata
+        ) as response:
+            if response.status != HTTPStatus.OK:
+                raise Exception(
+                    f"Gemini Upload API error: Failed to initiate upload: {response.status}"
+                )
+
+            upload_url = response.headers.get("X-Goog-Upload-URL")
+            if not upload_url:
+                raise Exception("No upload URL received from server")
+
+        # Upload the file content using streaming
+        upload_headers = {
+            "Content-Length": str(file_size),
+            "X-Goog-Upload-Offset": "0",
+            "X-Goog-Upload-Command": "upload, finalize",
+        }
+
+        # Stream the file content directly from the source URL to Gemini API
+        async with session.get(file_url) as source_response:
+            if source_response.status != HTTPStatus.OK:
+                raise Exception(
+                    f"Gemini Upload API error: Failed to fetch file content: {source_response.status}"
+                )
+
+            async with session.put(
+                upload_url, headers=upload_headers, data=source_response.content
+            ) as upload_response:
+                if upload_response.status != HTTPStatus.OK:
+                    raise Exception(
+                        f"Gemini Upload API error: Failed to upload file: {upload_response.status}"
+                    )
+
+                return await upload_response.json()
+
+    @staticmethod
+    async def convert_openai_image_content_to_google(
+        msg: dict[str, Any], api_key: str
+    ) -> dict[str, Any]:
+        """Convert OpenAI image content model to Google Gemini format"""
+        data_url = msg["image_url"]["url"]
+        if data_url.startswith("data:"):
+            # Extract media type and base64 data
+            parts = data_url.split(",", 1)
+            media_type = parts[0].split(":")[1].split(";")[0]  # e.g., "image/jpeg"
+            base64_data = parts[1]  # The actual base64 string without prefix
+            return {
+                "inline_data": {
+                    "mime_type": media_type,
+                    "data": base64_data,
+                }
+            }
+        else:
+            # download the image and upload it to Google Gemini
+            # https://ai.google.dev/api/files#files_create_image-SHELL
+            try:
+                async with aiohttp.ClientSession() as session:
+                    result = await GoogleAdapter.upload_file_to_gemini(
+                        session, data_url, api_key
+                    )
+                return {
+                    "file_data": {
+                        "mime_type": result["file"]["mimeType"],
+                        "file_uri": result["file"]["uri"],
+                    }
+                }
+            except Exception as e:
+                logger.error(f"Error uploading image to Google Gemini: {e}")
+                raise e
+
+    @staticmethod
+    async def convert_openai_content_to_google(
+        content: list[dict[str, Any]] | str,
+        api_key: str,
+    ) -> list[dict[str, Any]]:
+        """Convert OpenAI content model to Google Gemini format"""
+        if isinstance(content, str):
+            return [{"text": content}]
+
+        try:
+            result = []
+            for msg in content:
+                _type = msg["type"]
+                if _type == "text":
+                    result.append({"text": msg["text"]})
+                elif _type == "image_url":
+                    result.append(
+                        await GoogleAdapter.convert_openai_image_content_to_google(
+                            msg, api_key
+                        )
+                    )
+                else:
+                    raise NotImplementedError(f"{_type} is not supported")
+            return result
+        except Exception as e:
+            raise NotImplementedError("Unsupported content type") from e
+
+    async def process_completion(
+        self,
+        endpoint: str,
+        payload: dict[str, Any],
+        api_key: str,
+    ) -> dict[str, Any] | AsyncGenerator[bytes, None]:
+        if endpoint != "chat/completions":
+            raise NotImplementedError(
+                f"Google adapter doesn't support endpoint {endpoint}"
+            )
+
+        # For chat completions, delegate to appropriate method
+        is_streaming = payload.get("stream", False)
+
+        if is_streaming:
+            # Convert OpenAI payload to Google format for streaming
+            model = payload.get("model", "")
+            google_payload = await self.convert_openai_completion_payload_to_google(
+                payload, api_key
+            )
+
+            # Return the stream generator directly
+            return self._stream_google_response(api_key, model, google_payload)
+        else:
+            try:
+                # For non-streaming, process normally
+                response = await self._process_google_chat_completion(api_key, payload)
+                return response
+            except Exception as e:
+                logger.error(f"Error processing Google chat completion: {str(e)}")
+                raise
+
+    async def _stream_google_response(
+        self, api_key: str, model: str, google_payload: dict[str, Any]
+    ) -> AsyncGenerator[bytes, None]:
+        model_path = model if model.startswith("models/") else f"models/{model}"
+        url = f"{self._base_url}/{model_path}:streamGenerateContent"
+
+        initial_chunk = {"choices": [{"delta": {"role": "assistant"}, "index": 0}]}
+        yield f"data: {json.dumps(initial_chunk)}\n\n".encode()
+
+        request_id = f"chatcmpl-{uuid.uuid4()}"
+        final_usage_data = None  # Store usage info when found
+
+        try:
+            if not google_payload:
+                raise ValueError("Empty payload for Google API request")
+            if not api_key:
+                raise ValueError("Missing API key for Google request")
+
+            headers = {"Content-Type": "application/json", "Accept": "application/json"}
+            logger.debug(
+                f"Google API request - URL: {url}, Payload sample: {str(google_payload)[:200]}..."
+            )
+
+            async with (
+                aiohttp.ClientSession() as session,
+                session.post(
+                    url, params={"key": api_key}, json=google_payload, headers=headers
+                ) as response,
+            ):
+                if response.status != HTTPStatus.OK:
+                    error_text = await response.text()
+                    logger.error(f"Google API error: {response.status} - {error_text}")
+                    raise ValueError(f"Google stream API error: {error_text}")
+
+                # Process response in chunks
+                buffer = ""
+                async for chunk in response.content.iter_chunks():
+                    if not chunk[0]:  # Empty chunk
+                        continue
+
+                    buffer += chunk[0].decode("utf-8")
+
+                    # Try to find complete JSON objects in the buffer
+                    while True:
+                        try:
+                            # Find the start of a JSON object
+                            start_idx = buffer.find("{")
+                            if start_idx == -1:
+                                break
+
+                            # Try to parse from the start of the object
+                            json_obj = json.loads(buffer[start_idx:])
+                            # If successful, process the object and remove it from buffer
+                            buffer = buffer[:start_idx]
+
+                            # Process the JSON object
+                            if "usageMetadata" in json_obj:
+                                final_usage_data = self._format_google_usage(
+                                    json_obj["usageMetadata"]
+                                )
+
+                            if "candidates" in json_obj:
+                                for c_idx, candidate in enumerate(
+                                    json_obj.get("candidates", [])
+                                ):
+                                    content = candidate.get("content", {})
+                                    text_content = "".join(
+                                        p.get("text", "")
+                                        for p in content.get("parts", [])
+                                    )
+                                    finish_reason = candidate.get("finishReason")
+
+                                    if text_content:
+                                        chunk = {
+                                            "id": request_id,
+                                            "object": "chat.completion.chunk",
+                                            "created": int(time.time()),
+                                            "model": model,
+                                            "choices": [
+                                                {
+                                                    "index": c_idx,
+                                                    "delta": {"content": text_content},
+                                                    "finish_reason": finish_reason.lower()
+                                                    if finish_reason
+                                                    else None,
+                                                }
+                                            ],
+                                        }
+                                        yield f"data: {json.dumps(chunk)}\n\n".encode()
+                                        await asyncio.sleep(
+                                            0.05
+                                        )  # Small delay to prevent overwhelming the client
+
+                        except json.JSONDecodeError:
+                            # Incomplete JSON, wait for more data
+                            break
+
+            # Yield final usage chunk if data was found
+            if final_usage_data:
+                usage_chunk = {
+                    "id": request_id,
+                    "object": "chat.completion.chunk",
+                    "created": int(time.time()),
+                    "model": model,
+                    "choices": [{"index": 0, "delta": {}}],
+                    "usage": final_usage_data,
+                }
+                yield f"data: {json.dumps(usage_chunk)}\n\n".encode()
+
+            # Send final [DONE] message
+            yield b"data: [DONE]\n\n"
+
+        except Exception as e:
+            logger.error(f"Google streaming API error: {str(e)}", exc_info=True)
+            error_chunk = {
+                "id": request_id,
+                "object": "chat.completion.chunk",
+                "created": int(time.time()),
+                "model": model,
+                "choices": [{"index": 0, "delta": {}, "finish_reason": "error"}],
+                "error": {"message": str(e), "type": "api_error"},
+            }
+            yield f"data: {json.dumps(error_chunk)}\n\n".encode()
+            yield b"data: [DONE]\n\n"
+
+    def _format_google_usage(self, metadata: dict) -> dict:
+        """Format Google usage metadata to OpenAI format"""
+        if not metadata:
+            return None
+        prompt_tokens = metadata.get("promptTokenCount", 0)
+        completion_tokens = metadata.get("candidatesTokenCount", 0)
+        return {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": metadata.get(
+                "totalTokenCount", prompt_tokens + completion_tokens
+            ),
+        }
+
+    @staticmethod
+    async def convert_openai_completion_payload_to_google(
+        payload: dict[str, Any],
+        api_key: str,
+    ) -> dict[str, Any]:
+        """Convert OpenAI-format completion payload to Google Gemini format"""
+        google_payload = {
+            "generationConfig": {
+                "stopSequences": payload.get("stop", []),
+                "temperature": payload.get("temperature", 0.7),
+                "topP": payload.get("top_p", 0.95),
+                "maxOutputTokens": payload.get("max_tokens", 2048),
+            },
+        }
+
+        messages = payload.get("messages", [])
+
+        # Process messages
+        google_contents = []
+        system_content = []
+
+        for msg in messages:
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+            content = await GoogleAdapter.convert_openai_content_to_google(
+                content, api_key
+            )
+
+            if role == "system":
+                # Google requires a system message to be string
+                # https://ai.google.dev/gemini-api/docs/text-generation#system-instructions
+                assert isinstance(msg.get("content", ""), str)
+                system_content.append(content)
+            elif role == "user":
+                google_contents.append({"parts": content, "role": "user"})
+            elif role == "assistant":
+                google_contents.append({"parts": content, "role": "model"})
+
+        # Add system instruction if present
+        if system_content:
+            google_payload["systemInstruction"] = {"parts": system_content}
+
+        google_payload["contents"] = google_contents
+
+        return google_payload
+
+    async def _process_google_chat_completion(
+        self, api_key: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Process a regular (non-streaming) chat completion with Google Gemini"""
+        model = payload.get("model", "")
+        logger.info(f"Processing regular chat completion for model: {model}")
+
+        # Convert payload to Google format
+        google_payload = await self.convert_openai_completion_payload_to_google(payload, api_key)
+
+        # Properly format the model name for the API request using ternary operator
+        model_path = model if model.startswith("models/") else f"models/{model}"
+
+        url = f"{self._base_url}/{model_path}:generateContent"
+        logger.info(f"Sending request to Google API: {url}")
+
+        try:
+            # Make the API request
+            headers = {"Content-Type": "application/json", "Accept": "application/json"}
+
+            # Check for API key
+            if not api_key:
+                raise ValueError("Missing API key for Google request")
+
+            logger.debug(f"Google API request - Headers: {headers}")
+            logger.debug(f"Google API request - URL: {url}")
+
+            async with (
+                aiohttp.ClientSession() as session,
+                session.post(
+                    url, params={"key": api_key}, json=google_payload, headers=headers
+                ) as response,
+            ):
+                response_status = response.status
+                logger.info(f"Google API response status: {response_status}")
+
+                if response_status != HTTPStatus.OK:
+                    error_text = await response.text()
+                    logger.error(f"Google API error: {response_status} - {error_text}")
+
+                    raise ValueError(f"Google API error: {error_text}")
+
+                response_json = await response.json()
+                logger.debug(
+                    f"Google API response: {json.dumps(response_json)[:200]}..."
+                )
+
+                # Convert to OpenAI format
+                return self.convert_google_completion_response_to_openai(response_json, model)
+
+        except Exception as e:
+            logger.error(f"Error in Google chat completion: {str(e)}", exc_info=True)
+            raise
+
+    @staticmethod
+    def convert_google_completion_response_to_openai(
+        google_response: dict[str, Any], model: str
+    ) -> dict[str, Any]:
+        """Convert Google completion response format to OpenAI format"""
+        openai_response = {
+            "id": f"chatcmpl-{uuid.uuid4()}",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": model,
+            "choices": [],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        }
+
+        # Extract the candidates
+        candidates = google_response.get("candidates", [])
+        if not candidates:
+            logger.warning("No candidates in Google response")
+            openai_response["choices"] = [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": ""},
+                    "finish_reason": "error",
+                }
+            ]
+            return openai_response
+
+        # Process each candidate
+        for i, candidate in enumerate(candidates):
+            content = candidate.get("content", {})
+            parts = content.get("parts", [])
+
+            # Extract text from parts
+            text_content = ""
+            for part in parts:
+                if "text" in part:
+                    text_content += part["text"]
+
+            # Determine finish reason
+            finish_reason = candidate.get("finishReason", "").lower()
+            if not finish_reason:
+                finish_reason = "stop"
+
+            # Add to choices
+            openai_response["choices"].append(
+                {
+                    "index": i,
+                    "message": {"role": "assistant", "content": text_content},
+                    "finish_reason": finish_reason,
+                }
+            )
+
+        # Set usage estimates if available
+        usage_metadata = google_response.get("usageMetadata", {})
+        if usage_metadata:
+            prompt_tokens = usage_metadata.get("promptTokenCount", 0)
+            completion_tokens = usage_metadata.get("candidatesTokenCount", 0)
+
+            openai_response["usage"] = {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+            }
+
+        return openai_response
+    
+    @staticmethod
+    def convert_openai_embeddings_payload_to_google(payload: dict[str, Any]) -> dict[str, Any]:
+        """Convert OpenAI-format embeddings payload to Google Gemini format"""
+        google_payload = {}
+        if "dimensions" in payload:
+            google_payload["outputDimensionality"] = payload["dimensions"]
+        
+        input = payload['input']
+        if isinstance(input, str):
+            google_payload["content"] = {"parts": [{"text": input}]}
+        elif isinstance(input, list):
+            google_payload["content"] = {"parts": [{"text": text} for text in input]}
+        
+        return google_payload
+    
+    @staticmethod
+    def convert_google_embeddings_response_to_openai(response_json: dict[str, Any], model: str) -> dict[str, Any]:
+        """Convert Google embeddings response format to OpenAI format"""
+        openai_response = {
+            "object": "list",
+            "data": [],
+            "model": model,
+            # Google doesn't provide the usage metadata for embeddings
+            "usage": {
+                "prompt_tokens": 0,
+                "total_tokens": 0,
+            },
+        }
+        values = response_json["embedding"]["values"]
+        if values:
+            openai_response["data"] = [{
+                "object": "embedding",
+                "embedding": values,
+                "index": 0,
+            }]
+        
+        return openai_response
+    
+    
+    async def process_embeddings(
+        self,
+        endpoint: str,
+        payload: dict[str, Any],
+        api_key: str,
+    ) -> dict[str, Any]:
+        # https://ai.google.dev/api/embeddings
+        """Process a embeddings request using Google API"""
+        model = payload["model"]
+
+        # Properly format the model name for the API request using ternary operator
+        model_path = model if model.startswith("models/") else f"models/{model}"
+
+        url = f"{self._base_url}/{model_path}:embedContent"
+        logger.info(f"Sending request to Google API: {url}")
+
+        # Convert payload to Google format
+        google_payload = self.convert_openai_embeddings_payload_to_google(payload)
+
+        try:
+            headers = {"Content-Type": "application/json", "Accept": "application/json"}
+
+            # Check for API key
+            if not api_key:
+                raise ValueError("Missing API key for Google request")
+
+            async with (
+                aiohttp.ClientSession() as session,
+                session.post(
+                    url, params={"key": api_key}, json=google_payload, headers=headers
+                ) as response,
+            ):
+                response_status = response.status
+                logger.info(f"Google API response status: {response_status}")
+
+                if response_status != HTTPStatus.OK:
+                    error_text = await response.text()
+                    logger.error(f"Google API error: {response_status} - {error_text}")
+
+                    raise ValueError(f"Google API error: {error_text}")
+
+                response_json = await response.json()
+                return self.convert_google_embeddings_response_to_openai(response_json, model)
+
+        except Exception as e:
+            logger.error(f"Error in Google embeddings: {str(e)}", exc_info=True)
+            raise

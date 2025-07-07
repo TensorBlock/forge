@@ -1,0 +1,110 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "forge"
+version = "0.1.0"
+description = "Forge is an open-source middleware service that simplifies AI model provider management. It allows you to use multiple AI providers (OpenAI, Anthropic, etc.) through a single, unified API. By storing your provider API keys securely, Forge generates a unified key that works across all your AI applications."
+requires-python = ">=3.12"
+authors = [
+    {name = "TensorBlock", email = "contact@tensorblock.co"},
+]
+readme = "README.md"
+license = {text = "MIT"}
+dependencies = [
+    "fastapi>=0.95.0",
+    "uvicorn>=0.22.0",
+    "pydantic>=2.0.0",
+    "python-jose>=3.3.0",
+    "passlib>=1.7.4",
+    "python-multipart>=0.0.5",
+    "sqlalchemy>=2.0.0",
+    "alembic>=1.10.4",
+    "aiohttp>=3.8.4",
+    "cryptography>=40.0.0",
+    "bcrypt==3.2.2",
+    "python-dotenv>=1.0.0",
+    "email-validator>=2.0.0",
+    "requests>=2.28.0",
+    "svix>=1.13.0",
+    "psycopg2-binary>=2.9.9",
+    "asyncpg>=0.29.0",
+    "boto3>=1.0.0",
+    "gunicorn>=20.0.0",
+    "redis>=4.6.0",  # sync & async clients used by shared cache
+    "loguru>=0.7.0",
+    "aiobotocore~=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-asyncio>=0.26.0",
+    "ruff>=0.2.0",
+    "pre-commit>=3.0.0",
+    "flake8",
+    "black==22.6.0",
+    "isort",
+    "mypy",
+]
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore:.*'crypt' is deprecated.*:DeprecationWarning:passlib.*"
+]
+asyncio_default_fixture_loop_scope = "function"
+asyncio_mode = "auto"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "app",
+    "alembic",
+    "alembic.ini",
+    "README.md",
+    "LICENSE",
+]
+
+[tool.ruff]
+# Same as Black
+indent-width = 4
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+# Enable Pyflakes ('F'), pycodestyle ('E'), and import sorting ('I')
+select = ["E", "F", "I", "N", "W", "B", "C4", "PL", "SIM", "UP"]
+ignore = [
+    "B008",     # Function call in argument defaults
+    "E501",     # Line too long
+    "PLR0912",  # Too many branches
+    "PLR0915",  # Too many statements
+    "PLR0913",  # Too many arguments
+    "B904",
+    "PLR0911",
+    "SIM118",
+    "PLW2901",
+    "SIM117",
+    "PLR2004",
+]
+# Allow autofix for all enabled rules (when `--fix` is passed)
+fixable = ["ALL"]
+unfixable = []
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+skip-magic-trailing-comma = false
+
+# Exclude a variety of commonly ignored directories
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.pytest]
+testpaths = ["tests"]
+python_files = "test_*.py"

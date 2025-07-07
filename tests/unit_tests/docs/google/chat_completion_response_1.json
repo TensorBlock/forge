@@ -1,0 +1,35 @@
+{
+    "candidates": [
+        {
+            "content": {
+                "parts": [
+                    {
+                        "text": "I am doing well, thank you for asking. How are you today?\n"
+                    }
+                ],
+                "role": "model"
+            },
+            "finishReason": "STOP",
+            "avgLogprobs": -0.2357906699180603
+        }
+    ],
+    "usageMetadata": {
+        "promptTokenCount": 6,
+        "candidatesTokenCount": 16,
+        "totalTokenCount": 22,
+        "promptTokensDetails": [
+            {
+                "modality": "TEXT",
+                "tokenCount": 6
+            }
+        ],
+        "candidatesTokensDetails": [
+            {
+                "modality": "TEXT",
+                "tokenCount": 16
+            }
+        ]
+    },
+    "modelVersion": "gemini-1.5-pro-002",
+    "responseId": "zCFeaOSZBvmSmNAP-sXGiQU"
+}
