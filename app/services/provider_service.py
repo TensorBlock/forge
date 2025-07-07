@@ -443,8 +443,8 @@ class ProviderService:
 
                     return provider_models
                 except Exception as e:
-                    # In case of API errors, return empty list
-                    logger.error(f"Error fetching models for {provider_name}: {str(e)}")
+                    # Use parameterized logging to avoid issues if the error message contains braces
+                    logger.error("Error fetching models for {}: {}", provider_name, str(e))
                     return []
 
             provider_adapter_cls = ProviderAdapterFactory.get_adapter_cls(provider_name)
@@ -498,7 +498,8 @@ class ProviderService:
                     f"API key is not permitted to use provider '{provider_name}'."
                 )
         except ValueError as e:
-            logger.error(f"Error getting provider info for model {model}: {str(e)}")
+            # Use parameterized logging to avoid issues if the error message contains braces
+            logger.error("Error getting provider info for model {}: {}", model, str(e))
             raise ValueError(
                 f"Invalid model ID: {model}. Please check your model configuration."
             )
@@ -674,9 +675,8 @@ class ProviderService:
                     )
 
                 except Exception as e:
-                    logger.error(
-                        f"Error in streaming response: {str(e)}", exc_info=True
-                    )
+                    # Use parameterized logging to avoid issues if the error message contains braces
+                    logger.error("Error in streaming response: {}", str(e), exc_info=True)
                     # Re-raise to propagate the error
                     raise
                 finally:
@@ -759,6 +759,8 @@ def create_default_tensorblock_provider_for_user(user_id: int, db: Session) -> N
     except Exception as e:
         db.rollback()
         logger.error(
-            f"Error creating default TensorBlock provider for user {user_id}: {e}"
+            "Error creating default TensorBlock provider for user {}: {}",
+            user_id,
+            e,
         )
         # Don't raise the exception - this is optional functionality
