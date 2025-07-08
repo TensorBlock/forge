@@ -11,6 +11,9 @@
 
 <div align="center">
   <h3>One API for all AI models</h3>
+  <p>
+    <a href="https://www.producthunt.com/products/tensorblock-forge?embed=true&utm_source=badge-top-post-badge&utm_medium=badge&utm_source=badge-tensorblock&#0045;forge" target="_blank"><img src="https://api.producthunt.com/widgets/embed-image/v1/top-post-badge.svg?post_id=985244&theme=light&period=daily&t=1752002891028" alt="TensorBlock&#0032;Forge - One&#0032;API&#0032;for&#0032;all&#0032;AI&#0032;models | Product Hunt" style="width: 250px; height: 54px;" width="250" height="54" /></a>
+  </p>
 
   <p>
     <a href="#key-features">Features</a> •
@@ -22,6 +25,8 @@
     <a href="#license">License</a>
   </p>
 </div>
+
+
 
 ## Introduction
 
