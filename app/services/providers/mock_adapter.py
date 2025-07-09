@@ -52,7 +52,7 @@ class MockAdapter(ProviderAdapter):
             messages = payload.get("messages", [])
             temperature = payload.get("temperature", 0.7)
             stream = payload.get("stream", False)
-            max_tokens = payload.get("max_tokens")
+            max_tokens = payload.get("max_completion_tokens", payload.get("max_tokens"))
 
             if stream:
                 # For streaming, return a generator

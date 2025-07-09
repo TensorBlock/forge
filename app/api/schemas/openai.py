@@ -41,33 +41,36 @@ class ChatMessage(BaseModel):
 
 
 class ChatCompletionRequest(BaseModel):
-    model: str
     messages: list[ChatMessage]
-    temperature: float | None = 1.0
-    top_p: float | None = 1.0
-    n: int | None = 1
-    stream: bool | None = False
-    stream_options: dict[str, Any] | None = None
-    stop: str | list[str] | None = None
-    max_tokens: int | None = None
-    presence_penalty: float | None = 0.0
+    model: str
+    audio: object | None = None
     frequency_penalty: float | None = 0.0
-    logit_bias: dict[str, float] | None = None
-    user: str | None = None
-    web_search_options: Any | None = None
-    response_format: dict[str, Any] | None = None
-    tools: list[Any, Any] | None = None
-    tool_choice: str | None = None
-    seed: int | None = None
+    logit_bias: dict[Any, Any] | None = None
     logprobs: bool | None = None
-    top_logprobs: int | None = None
     max_completion_tokens: int | None = None
+    max_tokens: int | None = None # deprecated
     metadata: dict[Any, Any] | None = None
-    modalities: list[str] | None = None
+    modalities: list[Any] | None = None
+    n: int | None = 1
     parallel_tool_calls: bool | None = True
-    prediction: dict[Any, Any] | None = None
+    prediction: object | None = None
+    presence_penalty: float | None = 0.0
     reasoning_effort: str | None = "medium"
+    response_format: Any | None = None
+    seed: int | None = None
     service_tier: str | None = "auto"
+    stop: str | list[Any] | None = None
+    store: bool | None = False
+    stream: bool | None = False
+    stream_options: object | None = None
+    temperature: float | None = 1.0
+    tool_choice: str | None = None
+    tools: list[Any] | None = None
+    top_logprobs: int | None = None
+    top_p: float | None = 1.0
+    user: str | None = None
+    web_search_options: object | None = None
+
 
 class ChatCompletionResponseChoice(BaseModel):
     index: int
@@ -93,19 +96,20 @@ class ChatCompletionResponse(BaseModel):
 class CompletionRequest(BaseModel):
     model: str
     prompt: str | list[str]
-    suffix: str | None = None
-    max_tokens: int | None = 16
-    temperature: float | None = 1.0
-    top_p: float | None = 1.0
-    n: int | None = 1
-    stream: bool | None = False
-    logprobs: int | None = None
-    echo: bool | None = False
-    stop: str | list[str] | None = None
-    presence_penalty: float | None = 0.0
-    frequency_penalty: float | None = 0.0
     best_of: int | None = 1
-    logit_bias: dict[str, float] | None = None
+    echo: bool | None = False
+    frequency_penalty: float | None = 0.0
+    logit_bias: dict[Any, Any] | None = None
+    logprobs: int | None = None
+    max_tokens: int | None = 16
+    n: int | None = 1
+    presence_penalty: float | None = 0.0
+    seed: int | None = None
+    stop: str | list[str] | None = None
+    stream: bool | None = False
+    stream_options: object | None = None
+    suffix: str | None = None
+    temperature: float | None = 1.0
     user: str | None = None
 
 
