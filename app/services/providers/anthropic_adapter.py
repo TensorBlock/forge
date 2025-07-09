@@ -124,7 +124,7 @@ class AnthropicAdapter(ProviderAdapter):
         streaming = payload.get("stream", False)
         anthropic_payload = {
             "model": payload["model"],
-            "max_tokens": payload.get("max_tokens", ANTHROPIC_DEFAULT_MAX_TOKENS),
+            "max_tokens": payload.get("max_completion_tokens", payload.get("max_tokens", ANTHROPIC_DEFAULT_MAX_TOKENS)),
             "temperature": payload.get("temperature", 1.0),
             "stop_sequences": payload.get("stop", []),
         }

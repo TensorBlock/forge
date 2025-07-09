@@ -392,7 +392,7 @@ class GoogleAdapter(ProviderAdapter):
                 "stopSequences": payload.get("stop", []),
                 "temperature": payload.get("temperature", 0.7),
                 "topP": payload.get("top_p", 0.95),
-                "maxOutputTokens": payload.get("max_tokens", 2048),
+                "maxOutputTokens": payload.get("max_completion_tokens", payload.get("max_tokens", 2048)),
             },
         }
 

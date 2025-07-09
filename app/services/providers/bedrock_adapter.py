@@ -184,8 +184,8 @@ class BedrockAdapter(ProviderAdapter):
         inferenceConfig = {}
         if "temperature" in payload:
             inferenceConfig["temperature"] = payload["temperature"]
-        if "max_tokens" in payload:
-            inferenceConfig["maxTokens"] = payload["max_tokens"]
+        if "max_completion_tokens" in payload or "max_tokens" in payload:
+            inferenceConfig["maxTokens"] = payload.get("max_completion_tokens", payload.get("max_tokens"))
         if "top_p" in payload:
             inferenceConfig["topP"] = payload["top_p"]
         if "stop" in payload:
