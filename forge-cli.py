@@ -152,8 +152,8 @@ class ForgeManager:
         provider_name: str,
         api_key: str,
         base_url: str | None = None,
-        model_mapping: dict[str, str] | None = None,
-        config: dict[str, str] | None = None,
+        model_mapping: str | None = None,
+        config: str | None = None,
     ) -> bool:
         """Add a provider key"""
         if not self.token:
@@ -170,7 +170,7 @@ class ForgeManager:
             "provider_name": provider_name,
             "api_key": api_key,
             "base_url": base_url,
-            "model_mapping": model_mapping,
+            "model_mapping": json.loads(model_mapping) if model_mapping else None,
             "config": json.loads(config) if config else None,
         }
 
@@ -209,6 +209,8 @@ class ForgeManager:
                         print(f"    Base URL: {key['base_url']}")
                     if key.get("config"):
                         print(f"    Config: {key['config']}")
+                    if key.get("model_mapping"):
+                        print(f"    Model Mapping: {key['model_mapping']}")
                 return keys
             else:
                 print(f"❌ Error listing provider keys: {response.status_code}")
@@ -612,7 +614,8 @@ def main():
             key = getpass("Enter provider API key: ")
             base_url = input("Enter provider base URL (optional, press Enter to skip): ")
             config = input("Enter provider config in json string format (optional, press Enter to skip): ")
-            forge.add_provider_key(provider, key, base_url=base_url, config=config)
+            model_mapping = input("Enter model ampping config in json string format (optional, press Enter to skip): ")
+            forge.add_provider_key(provider, key, base_url=base_url, config=config, model_mapping=model_mapping)
 
         elif choice == "9":
             if not forge.token:

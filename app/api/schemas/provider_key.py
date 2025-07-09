@@ -1,6 +1,7 @@
+import json
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, computed_field, Field
+from pydantic import BaseModel, ConfigDict, computed_field, Field, field_validator
 
 from app.core.logger import get_logger
 from app.core.security import decrypt_api_key
@@ -77,6 +78,20 @@ class ProviderKeyInDBBase(BaseModel):
     updated_at: datetime
     encrypted_api_key: str
     model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("model_mapping", mode="before")
+    @classmethod
+    def parse_model_mapping(cls, v):
+        """Parse JSON string to dictionary for model_mapping field."""
+        if v is None:
+            return None
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except json.JSONDecodeError:
+                logger.warning(f"Failed to parse model_mapping JSON: {v}")
+                return {}
+        return v
 
 
 class ProviderKey(ProviderKeyInDBBase):
