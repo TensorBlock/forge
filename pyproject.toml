@@ -35,6 +35,8 @@ dependencies = [
     "redis>=4.6.0",  # sync & async clients used by shared cache
     "loguru>=0.7.0",
     "aiobotocore~=2.0",
+    "google-generativeai>=0.3.0",
+    "google-genai>=0.3.0",
 ]
 
 [project.optional-dependencies]

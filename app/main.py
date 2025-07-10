@@ -94,7 +94,7 @@ async def provider_authentication_exception_handler(request: Request, exc: Provi
 async def invalid_provider_exception_handler(request: Request, exc: InvalidProviderException):
     return HTTPException(
         status_code=400,
-        detail=f"{str(exc)}. Please verify your provider and model details by calling the /models endpoint or visiting https://tensorblock.co/api-docs/model-ids, and ensure you’re using a valid provider name, model name, and model ID."
+        detail=f"{str(exc)}. Please verify your provider and model details by calling the /models endpoint or visiting https://tensorblock.co/api-docs/model-ids, and ensure you're using a valid provider name, model name, and model ID."
     )
 
 # Add exception handler for BaseInvalidProviderSetupException
