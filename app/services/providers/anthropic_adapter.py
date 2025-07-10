@@ -3,13 +3,17 @@ import time
 import uuid
 from collections.abc import AsyncGenerator
 from http import HTTPStatus
-from typing import Any
+from typing import Any, Callable
 
 import aiohttp
+
+from app.core.logger import get_logger
 
 from .base import ProviderAdapter
 
 ANTHROPIC_DEFAULT_MAX_TOKENS = 4096
+
+logger = get_logger(name="anthropic_adapter")
 
 
 class AnthropicAdapter(ProviderAdapter):
@@ -106,22 +110,10 @@ class AnthropicAdapter(ProviderAdapter):
             self.cache_models(api_key, self._base_url, models)
 
             return models
-
-    async def process_completion(
-        self,
-        endpoint: str,
-        payload: dict[str, Any],
-        api_key: str,
-    ) -> Any:
-        """Process a completion request using Anthropic API"""
-        headers = {
-            "x-api-key": api_key,
-            "Content-Type": "application/json",
-            "anthropic-version": "2023-06-01",
-        }
-
-        # Convert OpenAI format to Anthropic format
-        streaming = payload.get("stream", False)
+    
+    @staticmethod
+    def convert_openai_payload_to_anthropic(payload: dict[str, Any]) -> dict[str, Any]:
+        """Convert Anthropic completion payload to OpenAI format"""
         anthropic_payload = {
             "model": payload["model"],
             "max_tokens": payload.get("max_completion_tokens", payload.get("max_tokens", ANTHROPIC_DEFAULT_MAX_TOKENS)),
@@ -138,7 +130,7 @@ class AnthropicAdapter(ProviderAdapter):
             for msg in payload["messages"]:
                 role = msg["role"]
                 content = msg["content"]
-                content = self.convert_openai_content_to_anthropic(content)
+                content = AnthropicAdapter.convert_openai_content_to_anthropic(content)
 
                 if role == "system":
                     # Anthropic requires a system message to be string
@@ -159,6 +151,25 @@ class AnthropicAdapter(ProviderAdapter):
             # Handle regular completion (legacy format)
             anthropic_payload["prompt"] = f"Human: {payload['prompt']}\n\nAssistant: "
 
+        return anthropic_payload
+
+    async def process_completion(
+        self,
+        endpoint: str,
+        payload: dict[str, Any],
+        api_key: str,
+    ) -> Any:
+        """Process a completion request using Anthropic API"""
+        headers = {
+            "x-api-key": api_key,
+            "Content-Type": "application/json",
+            "anthropic-version": "2023-06-01",
+        }
+
+        streaming = payload.get("stream", False)
+        # Convert OpenAI format to Anthropic format
+        anthropic_payload = self.convert_openai_payload_to_anthropic(payload)
+
         # Choose the appropriate API endpoint - using ternary operator
         api_endpoint = "messages" if "messages" in anthropic_payload else "complete"
 
@@ -167,17 +178,18 @@ class AnthropicAdapter(ProviderAdapter):
         # Handle streaming requests
         if streaming and "messages" in anthropic_payload:
             anthropic_payload["stream"] = True
-            return await self._stream_anthropic_response(
+            return await self.stream_anthropic_response(
                 url, headers, anthropic_payload, payload["model"]
             )
         else:
             # For non-streaming, use the regular approach
-            return await self._process_regular_response(
+            return await self.process_regular_response(
                 url, headers, anthropic_payload, payload["model"]
             )
 
-    async def _stream_anthropic_response(
-        self, url, headers, anthropic_payload, model_name
+    @staticmethod
+    async def stream_anthropic_response(
+        url, headers, anthropic_payload, model_name, error_handler: Callable[[str, int], Any] | None = None
     ):
         """Handle streaming response from Anthropic API, including usage data."""
 
@@ -194,9 +206,12 @@ class AnthropicAdapter(ProviderAdapter):
             ):
                 if response.status != HTTPStatus.OK:
                     error_text = await response.text()
-                    raise ValueError(
-                        f"Anthropic API error: {response.status} - {error_text}"
-                    )
+                    if error_handler:
+                        error_handler(error_text, response.status)
+                    else:
+                        raise ValueError(
+                            f"Anthropic API error: {response.status} - {error_text}"
+                        )
 
                 buffer = ""
                 async for line_bytes in response.content:
@@ -329,8 +344,9 @@ class AnthropicAdapter(ProviderAdapter):
 
         return stream_response()
 
-    async def _process_regular_response(
-        self, url, headers, anthropic_payload, model_name
+    @staticmethod
+    async def process_regular_response(
+        url: str, headers: dict[str, str], anthropic_payload: dict[str, Any], model_name: str, error_handler: Callable[[str, int], Any] | None = None
     ):
         """Handle regular (non-streaming) response from Anthropic API"""
         # Single with statement for multiple contexts
@@ -340,7 +356,10 @@ class AnthropicAdapter(ProviderAdapter):
         ):
             if response.status != HTTPStatus.OK:
                 error_text = await response.text()
-                raise ValueError(f"Anthropic API error: {error_text}")
+                if error_handler:
+                    error_handler(error_text, response.status)
+                else:
+                    raise ValueError(f"Anthropic API error: {error_text}")
 
             anthropic_response = await response.json()
 
