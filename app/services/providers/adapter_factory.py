@@ -13,6 +13,7 @@ from .openai_adapter import OpenAIAdapter
 from .perplexity_adapter import PerplexityAdapter
 from .tensorblock_adapter import TensorblockAdapter
 from .zhipu_adapter import ZhipuAdapter
+from .vertex_adapter import VertexAdapter
 
 
 class ProviderAdapterFactory:
@@ -184,6 +185,9 @@ class ProviderAdapterFactory:
         },
         "bedrock": {
             "adapter": BedrockAdapter,
+        },
+        "vertex": {
+            "adapter": VertexAdapter,
         },
         "customized": {
             "adapter": OpenAIAdapter,

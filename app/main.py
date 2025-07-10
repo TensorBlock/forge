@@ -3,7 +3,7 @@ import time
 from collections.abc import Callable
 
 from dotenv import load_dotenv
-from fastapi import APIRouter, FastAPI, Request
+from fastapi import APIRouter, FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -20,6 +20,7 @@ from app.api.routes import (
 from app.core.database import engine
 from app.core.logger import get_logger
 from app.models.base import Base
+from app.exceptions.exceptions import ProviderAuthenticationException, InvalidProviderException, BaseInvalidProviderSetupException, ProviderAPIException
 
 load_dotenv()
 
@@ -76,6 +77,42 @@ app = FastAPI(
     redoc_url="/redoc" if not is_production else None,
     openapi_url="/openapi.json" if not is_production else None,
 )
+
+### Exception handlers block ###
+
+# Add exception handler for ProviderAuthenticationException
+@app.exception_handler(ProviderAuthenticationException)
+async def provider_authentication_exception_handler(request: Request, exc: ProviderAuthenticationException):
+    return HTTPException(
+        status_code=401,
+        detail=f"Authentication failed for provider {exc.provider_name}"
+    )
+
+# Add exception handler for InvalidProviderException
+@app.exception_handler(InvalidProviderException)
+async def invalid_provider_exception_handler(request: Request, exc: InvalidProviderException):
+    return HTTPException(
+        status_code=400,
+        detail=f"Invalid provider: {exc.identifier}"
+    )
+
+# Add exception handler for BaseInvalidProviderSetupException
+@app.exception_handler(BaseInvalidProviderSetupException)
+async def base_invalid_provider_setup_exception_handler(request: Request, exc: BaseInvalidProviderSetupException):
+    return HTTPException(
+        status_code=400,
+        detail=f"Invalid provider setup: {exc.provider_name}"
+    )
+
+# Add exception handler for ProviderAPIException
+@app.exception_handler(ProviderAPIException)
+async def provider_api_exception_handler(request: Request, exc: ProviderAPIException):
+    return HTTPException(
+        status_code=exc.error_code,
+        detail=f"Provider API error: {exc.provider_name} {exc.error_code} {exc.error_message}"
+    )
+
+### Exception handlers block ends ###
 
 
 # Middleware to log slow requests
