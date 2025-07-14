@@ -28,6 +28,125 @@ class OpenAIAdapter(ProviderAdapter):
     def provider_name(self) -> str:
         return self._provider_name
 
+    def validate_messages(self, messages: list[dict[str, Any]]) -> None:
+        """Validate message structure for OpenAI API compatibility"""
+        if not messages:
+            return
+            
+        for i, message in enumerate(messages):
+            role = message.get("role")
+            
+            # Check for tool messages that don't have proper preceding tool_calls
+            if role == "tool":
+                # Find the preceding assistant message with tool_calls
+                has_preceding_tool_calls = False
+                for j in range(i - 1, -1, -1):
+                    prev_message = messages[j]
+                    if prev_message.get("role") == "assistant":
+                        if "tool_calls" in prev_message:
+                            has_preceding_tool_calls = True
+                            break
+                        elif "content" in prev_message:
+                            # If assistant message has content but no tool_calls, 
+                            # it's not a valid preceding message for tool role
+                            break
+                
+                if not has_preceding_tool_calls:
+                    error_msg = f"Message at index {i} with role 'tool' must be a response to a preceding message with 'tool_calls'"
+                    logger.error(f"OpenAI API validation error: {error_msg}")
+                    raise BaseInvalidRequestException(
+                        provider_name=self.provider_name,
+                        error=ValueError(error_msg)
+                    )
+
+    def validate_tools(self, tools: list[dict[str, Any]]) -> None:
+        """Validate tools structure for OpenAI API compatibility"""
+        if not tools:
+            return
+            
+        for i, tool in enumerate(tools):
+            if not isinstance(tool, dict):
+                error_msg = f"Tool at index {i} must be a dictionary"
+                logger.error(f"OpenAI API validation error: {error_msg}")
+                raise BaseInvalidRequestException(
+                    provider_name=self.provider_name,
+                    error=ValueError(error_msg)
+                )
+            
+            tool_type = tool.get("type")
+            if tool_type != "function":
+                error_msg = f"Tool at index {i} has unsupported type '{tool_type}'. Only 'function' type is supported"
+                logger.error(f"OpenAI API validation error: {error_msg}")
+                raise BaseInvalidRequestException(
+                    provider_name=self.provider_name,
+                    error=ValueError(error_msg)
+                )
+            
+            function = tool.get("function")
+            if not function or not isinstance(function, dict):
+                error_msg = f"Tool at index {i} must have a 'function' object"
+                logger.error(f"OpenAI API validation error: {error_msg}")
+                raise BaseInvalidRequestException(
+                    provider_name=self.provider_name,
+                    error=ValueError(error_msg)
+                )
+            
+            function_name = function.get("name")
+            if not function_name or not isinstance(function_name, str):
+                error_msg = f"Function at index {i} must have a valid 'name' string"
+                logger.error(f"OpenAI API validation error: {error_msg}")
+                raise BaseInvalidRequestException(
+                    provider_name=self.provider_name,
+                    error=ValueError(error_msg)
+                )
+
+    def validate_tool_choice(self, tool_choice: Any) -> None:
+        """Validate tool_choice parameter for OpenAI API compatibility"""
+        if tool_choice is None:
+            return
+            
+        if isinstance(tool_choice, str):
+            valid_choices = ["none", "auto"]
+            if tool_choice not in valid_choices:
+                error_msg = f"tool_choice must be one of {valid_choices}, got '{tool_choice}'"
+                logger.error(f"OpenAI API validation error: {error_msg}")
+                raise BaseInvalidRequestException(
+                    provider_name=self.provider_name,
+                    error=ValueError(error_msg)
+                )
+        elif isinstance(tool_choice, dict):
+            if "type" not in tool_choice:
+                error_msg = "tool_choice object must have a 'type' field"
+                logger.error(f"OpenAI API validation error: {error_msg}")
+                raise BaseInvalidRequestException(
+                    provider_name=self.provider_name,
+                    error=ValueError(error_msg)
+                )
+            
+            tool_choice_type = tool_choice.get("type")
+            if tool_choice_type == "function":
+                if "function" not in tool_choice:
+                    error_msg = "tool_choice with type 'function' must have a 'function' object"
+                    logger.error(f"OpenAI API validation error: {error_msg}")
+                    raise BaseInvalidRequestException(
+                        provider_name=self.provider_name,
+                        error=ValueError(error_msg)
+                    )
+            elif tool_choice_type not in ["none", "auto"]:
+                error_msg = f"tool_choice type must be one of ['none', 'auto', 'function'], got '{tool_choice_type}'"
+                logger.error(f"OpenAI API validation error: {error_msg}")
+                raise BaseInvalidRequestException(
+                    provider_name=self.provider_name,
+                    error=ValueError(error_msg)
+                )
+        else:
+            error_msg = f"tool_choice must be a string or object, got {type(tool_choice).__name__}"
+            logger.error(f"OpenAI API validation error: {error_msg}")
+            raise BaseInvalidRequestException(
+                provider_name=self.provider_name,
+                error=ValueError(error_msg)
+            )
+
     def get_model_id(self, payload: dict[str, Any]) -> str:
         """Get the model ID from the payload"""
         if "id" in payload:
@@ -100,6 +219,18 @@ class OpenAIAdapter(ProviderAdapter):
         query_params: dict[str, Any] = None,
     ) -> Any:
         """Process a completion request using OpenAI API"""
+        # Validate messages before sending to API
+        if "messages" in payload:
+            self.validate_messages(payload["messages"])
+        
+        # Validate tools if present
+        if "tools" in payload:
+            self.validate_tools(payload["tools"])
+        
+        # Validate tool_choice if present
+        if "tool_choice" in payload:
+            self.validate_tool_choice(payload["tool_choice"])
+            
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",

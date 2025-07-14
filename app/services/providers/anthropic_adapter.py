@@ -9,6 +9,7 @@ import aiohttp
 
 from app.core.logger import get_logger
 from app.exceptions.exceptions import ProviderAPIException, InvalidCompletionRequestException
+from app.exceptions.exceptions import BaseInvalidRequestException
 
 from .base import ProviderAdapter
 
@@ -32,6 +33,78 @@ class AnthropicAdapter(ProviderAdapter):
     @property
     def provider_name(self) -> str:
         return self._provider_name
+
+    def validate_tools(self, tools: list[dict[str, Any]]) -> None:
+        """Validate tools structure for Anthropic API compatibility"""
+        if not tools:
+            return
+            
+        for i, tool in enumerate(tools):
+            if not isinstance(tool, dict):
+                error_msg = f"Tool at index {i} must be a dictionary"
+                logger.error(f"Anthropic API validation error: {error_msg}")
+                raise BaseInvalidRequestException(
+                    provider_name=self.provider_name,
+                    error=ValueError(error_msg)
+                )
+            
+            # Anthropic uses "function" type for tools
+            if "function" not in tool:
+                error_msg = f"Tool at index {i} must have a 'function' object"
+                logger.error(f"Anthropic API validation error: {error_msg}")
+                raise BaseInvalidRequestException(
+                    provider_name=self.provider_name,
+                    error=ValueError(error_msg)
+                )
+            
+            function = tool["function"]
+            if not isinstance(function, dict):
+                error_msg = f"Function at index {i} must be a dictionary"
+                logger.error(f"Anthropic API validation error: {error_msg}")
+                raise BaseInvalidRequestException(
+                    provider_name=self.provider_name,
+                    error=ValueError(error_msg)
+                )
+            
+            function_name = function.get("name")
+            if not function_name or not isinstance(function_name, str):
+                error_msg = f"Function at index {i} must have a valid 'name' string"
+                logger.error(f"Anthropic API validation error: {error_msg}")
+                raise BaseInvalidRequestException(
+                    provider_name=self.provider_name,
+                    error=ValueError(error_msg)
+                )
+
+    def validate_messages(self, messages: list[dict[str, Any]]) -> None:
+        """Validate message structure for Anthropic API compatibility"""
+        if not messages:
+            return
+            
+        for i, message in enumerate(messages):
+            role = message.get("role")
+            
+            # Check for tool messages that don't have proper preceding tool_calls
+            if role == "tool":
+                # Find the preceding assistant message with tool_calls
+                has_preceding_tool_calls = False
+                for j in range(i - 1, -1, -1):
+                    prev_message = messages[j]
+                    if prev_message.get("role") == "assistant":
+                        if "tool_calls" in prev_message:
+                            has_preceding_tool_calls = True
+                            break
+                        elif "content" in prev_message:
+                            # If assistant message has content but no tool_calls, 
+                            # it's not a valid preceding message for tool role
+                            break
+                
+                if not has_preceding_tool_calls:
+                    error_msg = f"Message at index {i} with role 'tool' must be a response to a preceding message with 'tool_calls'"
+                    logger.error(f"Anthropic API validation error: {error_msg}")
+                    raise BaseInvalidRequestException(
+                        provider_name=self.provider_name,
+                        error=ValueError(error_msg)
+                    )
 
     @staticmethod
     def convert_openai_image_content_to_anthropic(
@@ -126,6 +199,14 @@ class AnthropicAdapter(ProviderAdapter):
         api_key: str,
     ) -> Any:
         """Process a completion request using Anthropic API"""
+        # Validate tools if present
+        if "tools" in payload:
+            self.validate_tools(payload["tools"])
+        
+        # Validate messages for tool role if present
+        if "messages" in payload:
+            self.validate_messages(payload["messages"])
+        
         headers = {
             "x-api-key": api_key,
             "Content-Type": "application/json",
@@ -161,12 +242,19 @@ class AnthropicAdapter(ProviderAdapter):
                     anthropic_messages.append({"role": "user", "content": content})
                 elif role == "assistant":
                     anthropic_messages.append({"role": "assistant", "content": content})
+                elif role == "tool":
+                    # Anthropic uses "tool" role for tool responses
+                    anthropic_messages.append({"role": "tool", "content": content})
 
             # Add system message if present
             if system_message:
                 anthropic_payload["system"] = system_message
 
             anthropic_payload["messages"] = anthropic_messages
+            
+            # Add tools if present
+            if "tools" in payload:
+                anthropic_payload["tools"] = payload["tools"]
         else:
             # Handle regular completion (legacy format)
             anthropic_payload["prompt"] = f"Human: {payload['prompt']}\n\nAssistant: "
@@ -248,7 +336,9 @@ class AnthropicAdapter(ProviderAdapter):
                                     )
 
                             elif event_type == "content_block_delta":
-                                delta_content = data.get("delta", {}).get("text", "")
+                                delta = data.get("delta", {})
+                                delta_content = delta.get("text", "")
+                                
                                 if delta_content:
                                     openai_chunk = {
                                         "id": request_id,
@@ -259,6 +349,31 @@ class AnthropicAdapter(ProviderAdapter):
                                             {
                                                 "index": 0,
                                                 "delta": {"content": delta_content},
+                                                "finish_reason": None,
+                                            }
+                                        ],
+                                    }
+                                elif "tool_use" in delta:
+                                    # Handle tool_use delta
+                                    tool_use = delta["tool_use"]
+                                    openai_chunk = {
+                                        "id": request_id,
+                                        "object": "chat.completion.chunk",
+                                        "created": int(time.time()),
+                                        "model": model_name,
+                                        "choices": [
+                                            {
+                                                "index": 0,
+                                                "delta": {
+                                                    "tool_calls": [{
+                                                        "id": tool_use.get("id", "call_1"),
+                                                        "type": "function",
+                                                        "function": {
+                                                            "name": tool_use.get("name", ""),
+                                                            "arguments": tool_use.get("input", "{}")
+                                                        }
+                                                    }]
+                                                },
                                                 "finish_reason": None,
                                             }
                                         ],
@@ -365,14 +480,40 @@ class AnthropicAdapter(ProviderAdapter):
                 # Messages API response
                 content = anthropic_response.get("content", [])
                 text_content = ""
+                tool_calls = []
 
-                # Extract text from content blocks
+                # Extract text and tool calls from content blocks
                 for block in content:
                     if block.get("type") == "text":
                         text_content += block.get("text", "")
+                    elif block.get("type") == "tool_use":
+                        # Convert Anthropic tool_use to OpenAI tool_calls format
+                        tool_use = block.get("tool_use", {})
+                        tool_calls.append({
+                            "id": tool_use.get("id", f"call_{len(tool_calls)}"),
+                            "type": "function",
+                            "function": {
+                                "name": tool_use.get("name", ""),
+                                "arguments": tool_use.get("input", "{}")
+                            }
+                        })
 
                 input_tokens = anthropic_response.get("usage", {}).get("input_tokens", 0)
                 output_tokens = anthropic_response.get("usage", {}).get("output_tokens", 0)
+                
+                # Determine finish reason
+                finish_reason = "stop"
+                if tool_calls:
+                    finish_reason = "tool_calls"
+                
+                message = {
+                    "role": "assistant",
+                    "content": text_content if text_content else None,
+                }
+                
+                if tool_calls:
+                    message["tool_calls"] = tool_calls
+                
                 return {
                     "id": completion_id,
                     "object": "chat.completion",
@@ -381,11 +522,8 @@ class AnthropicAdapter(ProviderAdapter):
                     "choices": [
                         {
                             "index": 0,
-                            "message": {
-                                "role": "assistant",
-                                "content": text_content,
-                            },
-                            "finish_reason": "stop",
+                            "message": message,
+                            "finish_reason": finish_reason,
                         }
                     ],
                     "usage": {
