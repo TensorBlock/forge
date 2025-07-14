@@ -8,6 +8,7 @@ from typing import Any
 import aiohttp
 
 from app.core.logger import get_logger
+from app.exceptions.exceptions import ProviderAPIException, BaseForgeException
 
 from .base import ProviderAdapter
 
@@ -45,7 +46,12 @@ class CohereAdapter(ProviderAdapter):
             ) as response:
                 if response.status != HTTPStatus.OK:
                     error_text = await response.text()
-                    raise ValueError(f"Cohere API error: {error_text}")
+                    logger.error(f"List models API error for {self.provider_name}: {error_text}")
+                    raise ProviderAPIException(
+                        provider_name=self.provider_name,
+                        error_code=response.status,
+                        error_message=error_text
+                    )
                 resp = await response.json()
                 models = [d["name"] for d in resp["models"]]
 
@@ -129,8 +135,12 @@ class CohereAdapter(ProviderAdapter):
             ):
                 if response.status != HTTPStatus.OK:
                     error_text = await response.text()
-                    logger.error(f"Cohere API error: {response.status} - {error_text}")
-                    raise ValueError(f"Cohere stream API error: {error_text}")
+                    logger.error(f"Streaming completion API error for {self.provider_name}: {error_text}")
+                    raise ProviderAPIException(
+                        provider_name=self.provider_name,
+                        error_code=response.status,
+                        error_message=error_text
+                    )
 
                 # Track the message ID for consistency
                 message_id = None
@@ -282,7 +292,7 @@ class CohereAdapter(ProviderAdapter):
                 # # Send final [DONE] message
                 yield b"data: [DONE]\n\n"
         except Exception as e:
-            logger.error(f"Cohere streaming API error: {str(e)}", exc_info=True)
+            logger.error(f"Streaming completion API error for {self.provider_name}: {e}", exc_info=True)
             error_chunk = {
                 "id": uuid.uuid4(),
                 "object": "chat.completion.chunk",
@@ -307,7 +317,12 @@ class CohereAdapter(ProviderAdapter):
             async with session.post(url, headers=headers, json=payload) as response:
                 if response.status != HTTPStatus.OK:
                     error_text = await response.text()
-                    raise ValueError(f"Cohere API error: {error_text}")
+                    logger.error(f"Completion API error for {self.provider_name}: {error_text}")
+                    raise ProviderAPIException(
+                        provider_name=self.provider_name,
+                        error_code=response.status,
+                        error_message=error_text
+                    )
                 resp = await response.json()
                 return self._convert_cohere_to_openai(resp, payload["model"])
 
@@ -389,10 +404,22 @@ class CohereAdapter(ProviderAdapter):
                 async with session.post(url, headers=headers, json=cohere_payload) as response:
                     if response.status != HTTPStatus.OK:
                         error_text = await response.text()
-                        raise ValueError(f"Cohere API error: {error_text}")
+                        logger.error(f"Embeddings API error for {self.provider_name}: {error_text}")
+                        raise ProviderAPIException(
+                            provider_name=self.provider_name,
+                            error_code=response.status,
+                            error_message=error_text
+                        )
                     response_json = await response.json()
                     return self.convert_cohere_embeddings_response_to_openai(response_json, payload["model"])
+        except BaseForgeException as e:
+            raise e
         except Exception as e:
-            logger.error(f"Error in Cohere embeddings: {str(e)}", exc_info=True)
-            raise
+            error_text = f"Embeddings API error for {self.provider_name}: {e}"
+            logger.error(error_text, exc_info=True)
+            raise ProviderAPIException(
+                provider_name=self.provider_name,
+                error_code=500,
+                error_message=error_text
+            )
                 

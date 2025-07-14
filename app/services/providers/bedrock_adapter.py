@@ -8,6 +8,7 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 from app.core.logger import get_logger
+from app.exceptions.exceptions import BaseInvalidProviderSetupException, ProviderAPIException, InvalidCompletionRequestException, BaseForgeException
 from .base import ProviderAdapter
 
 
@@ -27,13 +28,32 @@ class BedrockAdapter(ProviderAdapter):
     def __init__(self, provider_name: str, base_url: str, config: dict[str, str] | None = None):
         self._provider_name = provider_name
         self._base_url = base_url
-        assert "region_name" in config, "Bedrock region_name is required"
-        self._region_name = config["region_name"]
-        assert "aws_access_key_id" in config, "Bedrock aws_access_key_id is required"
-        self._aws_access_key_id = config["aws_access_key_id"]
-        assert "aws_secret_access_key" in config, "Bedrock aws_secret_access_key is required"
-        self._aws_secret_access_key = config["aws_secret_access_key"]
+        self.parse_config(config)
         self._session = aiobotocore.session.get_session()
+    
+    @staticmethod
+    def validate_config(config: dict[str, str] | None):
+        """Validate the config for the given provider"""
+
+        try:
+            assert config is not None, "Bedrock config is required"
+            assert "region_name" in config, "Bedrock region_name is required"
+            assert "aws_access_key_id" in config, "Bedrock aws_access_key_id is required"
+            assert "aws_secret_access_key" in config, "Bedrock aws_secret_access_key is required" 
+        except AssertionError as e:
+            logger.error(str(e))
+            raise BaseInvalidProviderSetupException(
+                provider_name="bedrock",
+                error=e
+            )
+    
+    def parse_config(self, config: dict[str, str] | None) -> None:
+        """Parse the config for the given provider"""
+
+        self.validate_config(config)
+        self._region_name = config["region_name"]
+        self._aws_access_key_id = config["aws_access_key_id"]
+        self._aws_secret_access_key = config["aws_secret_access_key"]
     
     @property
     def client_ctx(self):
@@ -50,10 +70,7 @@ class BedrockAdapter(ProviderAdapter):
     @staticmethod
     def serialize_api_key_config(api_key: str, config: dict[str, Any] | None) -> str:
         """Serialize the API key for the given provider"""
-        assert config is not None
-        assert config.get("region_name") is not None
-        assert config.get("aws_access_key_id") is not None
-        assert config.get("aws_secret_access_key") is not None
+        BedrockAdapter.validate_config(config)
 
         return json.dumps({
             "api_key": api_key,
@@ -65,11 +82,18 @@ class BedrockAdapter(ProviderAdapter):
     @staticmethod
     def deserialize_api_key_config(serialized_api_key_config: str) -> tuple[str, dict[str, Any] | None]:
         """Deserialize the API key for the given provider"""
-        deserialized_api_key_config = json.loads(serialized_api_key_config)
-        assert deserialized_api_key_config.get("api_key") is not None
-        assert deserialized_api_key_config.get("region_name") is not None
-        assert deserialized_api_key_config.get("aws_access_key_id") is not None
-        assert deserialized_api_key_config.get("aws_secret_access_key") is not None
+        try:
+            deserialized_api_key_config = json.loads(serialized_api_key_config)
+            assert deserialized_api_key_config.get("api_key") is not None
+            assert deserialized_api_key_config.get("region_name") is not None
+            assert deserialized_api_key_config.get("aws_access_key_id") is not None
+            assert deserialized_api_key_config.get("aws_secret_access_key") is not None
+        except Exception as e:
+            logger.error(str(e))
+            raise BaseInvalidProviderSetupException(
+                provider_name="bedrock",
+                error=e
+            )
 
         return deserialized_api_key_config["api_key"], {
             "region_name": deserialized_api_key_config["region_name"],
@@ -80,10 +104,7 @@ class BedrockAdapter(ProviderAdapter):
     @staticmethod
     def mask_config(config: dict[str, Any] | None) -> dict[str, Any] | None:
         """Mask the config for the given provider"""
-        assert config is not None
-        assert config.get("region_name") is not None
-        assert config.get("aws_access_key_id") is not None
-        assert config.get("aws_secret_access_key") is not None
+        BedrockAdapter.validate_config(config)
         mask_str = "*" * 7
         return {
             "region_name": config["region_name"][:3] + mask_str + config["region_name"][-3:],
@@ -105,7 +126,13 @@ class BedrockAdapter(ProviderAdapter):
             try:
                 response = await bedrock.list_foundation_models()
             except Exception as e:
-                raise ValueError(f"Bedrock API error: {e}")
+                error_text = f"List models API error for {self.provider_name}: {e}"
+                logger.error(error_text)
+                raise ProviderAPIException(
+                    provider_name=self.provider_name,
+                    error_code=400,
+                    error_message=error_text
+                )
             
             models = [r["modelId"] for r in response["modelSummaries"]]
 
@@ -152,9 +179,22 @@ class BedrockAdapter(ProviderAdapter):
                                 },
                             }
                         }
+            except aiohttp.ClientResponseError as e:
+                error_text = f"Bedrock API error: failed to download image from {data_url}: {e}"
+                logger.error(error_text)
+                raise ProviderAPIException(
+                    provider_name="bedrock",
+                    error_code=e.status,
+                    error_message=error_text
+                )
             except Exception as e:
-                logger.warning(f"Bedrock API error: failed to download image from {data_url}: {e}")
-                raise Exception(f"Bedrock API error: {e}")
+                error_text = f"Bedrock API error: failed to download image from {data_url}: {e}"
+                logger.error(error_text)
+                raise ProviderAPIException(
+                    provider_name="bedrock",
+                    error_code=500,
+                    error_message=error_text
+                )
     
     @staticmethod
     async def convert_openai_content_to_bedrock(content: list[dict[str, Any]] | str) -> list[dict[str, Any]]:
@@ -171,10 +211,22 @@ class BedrockAdapter(ProviderAdapter):
                 elif _type == "image_url":
                     result.append(await BedrockAdapter.convert_openai_image_content_to_bedrock(msg))
                 else:
-                    raise NotImplementedError(f"{_type} is not supported")
+                    error_text = f"Bedrock API request error: {_type} is not supported"
+                    logger.error(error_text)
+                    raise InvalidCompletionRequestException(
+                        provider_name="bedrock",
+                        error=ValueError(error_text)
+                    )
             return result
+        except BaseForgeException as e:
+            raise e
         except Exception as e:
-            raise NotImplementedError("Unsupported content type") from e
+            error_text = f"Bedrock API request error: {e}"
+            logger.error(error_text)
+            raise InvalidCompletionRequestException(
+                provider_name="bedrock",
+                error=e
+            ) from e
 
     @staticmethod
     async def convert_openai_payload_to_bedrock(payload: dict[str, Any]) -> dict[str, Any]:
@@ -224,7 +276,13 @@ class BedrockAdapter(ProviderAdapter):
                     **bedrock_payload,
                 )
             except Exception as e:
-                raise ValueError(f"Bedrock API error: {e}")
+                error_text = f"Completion API error for {self.provider_name}: {e}"
+                logger.error(error_text)
+                raise ProviderAPIException(
+                    provider_name=self.provider_name,
+                    error_code=400,
+                    error_message=error_text
+                )
 
             if message := response.get("output", {}).get("message"):
                 completion_id = f"chatcmpl-{str(uuid.uuid4())}"
@@ -239,7 +297,13 @@ class BedrockAdapter(ProviderAdapter):
                         if _type == "text":
                             text_content += value
                         else:
-                            raise NotImplementedError(f"Bedrock API error: {_type} response is not supported")
+                            error_text = f"Completion API error for {self.provider_name}: {_type} response is not supported"
+                            logger.error(error_text)
+                            raise ProviderAPIException(
+                                provider_name=self.provider_name,
+                                error_code=400,
+                                error_message=error_text
+                            )
                 
                 input_tokens = response.get("usage", {}).get("inputTokens", 0)
                 output_tokens = response.get("usage", {}).get("outputTokens", 0)
@@ -365,7 +429,13 @@ class BedrockAdapter(ProviderAdapter):
                         if openai_chunk:
                             yield f"data: {json.dumps(openai_chunk)}\n\n".encode()
                 except Exception as e:
-                    raise ValueError(f"Bedrock API error: {e}")
+                    error_text = f"Streaming completion API error for {self.provider_name}: {e}"
+                    logger.error(error_text)
+                    raise ProviderAPIException(
+                        provider_name=self.provider_name,
+                        error_code=400,
+                        error_message=error_text
+                    )
                 if final_usage_data:
                     openai_chunk = {
                         "id": request_id,
@@ -382,8 +452,10 @@ class BedrockAdapter(ProviderAdapter):
 
             # Send final [DONE] message
             yield b"data: [DONE]\n\n"
+        except BaseForgeException as e:
+            raise e
         except Exception as e:
-            logger.error(f"Bedrock streaming API error: {str(e)}", exc_info=True)
+            logger.error(f"Streaming completion API error for {self.provider_name}: {e}", exc_info=True)
             error_chunk = {
                 "id": str(uuid.uuid4()),
                 "object": "chat.completion.chunk",

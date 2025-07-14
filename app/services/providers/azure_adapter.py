@@ -3,9 +3,10 @@ from typing import Any
 
 from .openai_adapter import OpenAIAdapter
 from app.core.logger import get_logger
+from app.exceptions.exceptions import ProviderAPIException, BaseInvalidProviderSetupException
 
 # Configure logging
-logger = get_logger(name="openai_adapter")
+logger = get_logger(name="azure_adapter")
 
 class AzureAdapter(OpenAIAdapter):
     def __init__(self, provider_name: str, base_url: str, config: dict[str, Any]):
@@ -18,15 +19,27 @@ class AzureAdapter(OpenAIAdapter):
         # base_url is required
         # e.g: https://THE-RESOURCE-NAME.openai.azure.com/
         if not base_url:
-            raise ValueError("Azure base URL is required")
+            error_text = "Azure base URL is required"
+            logger.error(error_text)
+            raise BaseInvalidProviderSetupException(
+                provider_name="azure",
+                error=ValueError(error_text)
+            )
         base_url = base_url.rstrip("/")
         return base_url
     
     @staticmethod
     def serialize_api_key_config(api_key: str, config: dict[str, Any] | None) -> str:
         """Serialize the API key for the given provider"""
-        assert config is not None
-        assert config.get("api_version") is not None
+        try:
+            assert config is not None
+            assert config.get("api_version") is not None
+        except AssertionError as e:
+            logger.error(str(e))
+            raise BaseInvalidProviderSetupException(
+                provider_name="azure",
+                error=e
+            )
 
         return json.dumps({
             "api_key": api_key,
@@ -36,9 +49,16 @@ class AzureAdapter(OpenAIAdapter):
     @staticmethod
     def deserialize_api_key_config(serialized_api_key_config: str) -> tuple[str, dict[str, Any] | None]:
         """Deserialize the API key for the given provider"""
-        deserialized_api_key_config = json.loads(serialized_api_key_config)
-        assert deserialized_api_key_config.get("api_key") is not None
-        assert deserialized_api_key_config.get("api_version") is not None
+        try:
+            deserialized_api_key_config = json.loads(serialized_api_key_config)
+            assert deserialized_api_key_config.get("api_key") is not None
+            assert deserialized_api_key_config.get("api_version") is not None
+        except Exception as e:
+            logger.error(str(e))
+            raise BaseInvalidProviderSetupException(
+                provider_name="azure",
+                error=e
+            )
 
         return deserialized_api_key_config["api_key"], {
             "api_version": deserialized_api_key_config["api_version"],
