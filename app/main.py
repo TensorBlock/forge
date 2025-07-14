@@ -94,7 +94,7 @@ async def provider_authentication_exception_handler(request: Request, exc: Provi
 async def invalid_provider_exception_handler(request: Request, exc: InvalidProviderException):
     return HTTPException(
         status_code=400,
-        detail=f"Invalid provider: {exc.identifier}"
+        detail=f"{str(exc)}. Please call the /models endpoint to check the valid providers/models id."
     )
 
 # Add exception handler for BaseInvalidProviderSetupException
@@ -102,7 +102,7 @@ async def invalid_provider_exception_handler(request: Request, exc: InvalidProvi
 async def base_invalid_provider_setup_exception_handler(request: Request, exc: BaseInvalidProviderSetupException):
     return HTTPException(
         status_code=400,
-        detail=f"Invalid provider setup: {exc.provider_name}"
+        detail=str(exc)
     )
 
 # Add exception handler for ProviderAPIException
@@ -118,7 +118,7 @@ async def provider_api_exception_handler(request: Request, exc: ProviderAPIExcep
 async def base_invalid_request_exception_handler(request: Request, exc: BaseInvalidRequestException):
     return HTTPException(
         status_code=400,
-        detail=f"Invalid request for: {exc.provider_name}"
+        detail=str(exc)
     )
 
 # Add exception handler for BaseInvalidForgeKeyException
