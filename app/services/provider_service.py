@@ -15,7 +15,7 @@ from app.core.cache import (
 )
 from app.core.logger import get_logger
 from app.core.security import decrypt_api_key, encrypt_api_key
-from app.exceptions.exceptions import InvalidProviderException
+from app.exceptions.exceptions import InvalidProviderException, BaseInvalidRequestException, InvalidForgeKeyException
 from app.models.user import User
 from app.services.usage_stats_service import UsageStatsService
 
@@ -322,6 +322,7 @@ class ProviderService:
         )
 
         if not matching_provider:
+            logger.error(f"No matching provider found for {original_model}")
             raise InvalidProviderException(original_model)
 
         provider_data = self.provider_keys[matching_provider]
@@ -358,6 +359,7 @@ class ProviderService:
                     provider_data.get("base_url"),
                 )
 
+        logger.error(f"No matching provider found for {model}")
         raise InvalidProviderException(model)
 
     def _get_provider_info(self, model: str) -> tuple[str, str, str | None]:
@@ -365,9 +367,9 @@ class ProviderService:
         Determine the provider based on the model name.
         """
         if not self._keys_loaded:
-            raise RuntimeError(
-                "Provider keys must be loaded before calling _get_provider_info. Call _load_provider_keys_async() first."
-            )
+            error_message = "Provider keys must be loaded before calling _get_provider_info. Call _load_provider_keys_async() first."
+            logger.error(error_message)
+            raise RuntimeError(error_message)
 
         provider_name, model_name_no_prefix = self._extract_provider_name_prefix(model)
 
@@ -485,24 +487,22 @@ class ProviderService:
 
         model = payload.get("model")
         if not model:
-            raise ValueError("Model is required")
-
-        try:
-            provider_name, actual_model, base_url = self._get_provider_info(model)
-
-            # Enforce scope restriction (case-insensitive).
-            if allowed_provider_names is not None and (
-                provider_name.lower() not in {p.lower() for p in allowed_provider_names}
-            ):
-                raise ValueError(
-                    f"API key is not permitted to use provider '{provider_name}'."
-                )
-        except ValueError as e:
-            # Use parameterized logging to avoid issues if the error message contains braces
-            logger.error("Error getting provider info for model {}: {}", model, str(e))
-            raise ValueError(
-                f"Invalid model ID: {model}. Please check your model configuration."
+            error_message = "Model is required"
+            logger.error(error_message)
+            raise BaseInvalidRequestException(
+                provider_name="unknown",
+                error=ValueError(error_message)
             )
+
+        provider_name, actual_model, base_url = self._get_provider_info(model)
+
+        # Enforce scope restriction (case-insensitive).
+        if allowed_provider_names is not None and (
+            provider_name.lower() not in {p.lower() for p in allowed_provider_names}
+        ):
+            error_message = f"API key is not permitted to use provider '{provider_name}'."
+            logger.error(error_message)
+            raise InvalidForgeKeyException(error=ValueError(error_message))
 
         logger.debug(
             f"Processing request for provider: {provider_name}, model: {actual_model}, endpoint: {endpoint}"
@@ -513,7 +513,9 @@ class ProviderService:
 
         # Get the provider's API key
         if provider_name not in self.provider_keys:
-            raise ValueError(f"No API key found for provider {provider_name}")
+            error_message = f"API key is not permitted to use provider '{provider_name}'."
+            logger.error(error_message)
+            raise InvalidForgeKeyException(error=ValueError(error_message))
 
         serialized_api_key_config = self.provider_keys[provider_name]["api_key"]
         provider_adapter_cls = ProviderAdapterFactory.get_adapter_cls(provider_name)
@@ -534,9 +536,9 @@ class ProviderService:
         elif "images/generations" in endpoint:
             # TODO: we only support openai for now
             if provider_name != "openai":
-                raise ValueError(
-                    f"Unsupported endpoint: {endpoint} for provider {provider_name}"
-                )
+                error_message = f"Unsupported endpoint: {endpoint} for provider {provider_name}"
+                logger.error(error_message)
+                raise NotImplementedError(error_message)
             result = await adapter.process_image_generation(
                 endpoint,
                 payload,
@@ -545,9 +547,9 @@ class ProviderService:
         elif "images/edits" in endpoint:
             # TODO: we only support openai for now
             if provider_name != "openai":
-                raise NotImplementedError(
-                    f"Unsupported endpoint: {endpoint} for provider {provider_name}"
-                )
+                error_message = f"Unsupported endpoint: {endpoint} for provider {provider_name}"
+                logger.error(error_message)
+                raise NotImplementedError(error_message)
             result = await adapter.process_image_edits(
                 endpoint,
                 payload,
@@ -560,7 +562,9 @@ class ProviderService:
                 api_key,
             )
         else:
-            raise ValueError(f"Unsupported endpoint: {endpoint}")
+            error_message = f"Unsupported endpoint: {endpoint}"
+            logger.error(error_message)
+            raise NotImplementedError(error_message)
 
         # Track usage statistics if it's not a streaming response
         if not inspect.isasyncgen(result):

@@ -117,7 +117,7 @@ class TestProviderServiceImages(TestCase):
         mock_anthropic_adapter.process_image_generation.side_effect = ValueError(
             "Unsupported endpoint: images/generations for provider anthropic"
         )
-        with self.assertRaises(ValueError) as context:
+        with self.assertRaises(NotImplementedError) as context:
             await service.process_request(
                 "images/generations", {"model": "claude-3-opus"}
             )

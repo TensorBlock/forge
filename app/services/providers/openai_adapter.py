@@ -4,6 +4,7 @@ from typing import Any
 
 import aiohttp
 from app.core.logger import get_logger
+from app.exceptions.exceptions import ProviderAPIException, BaseInvalidRequestException
 
 from .base import ProviderAdapter
 
@@ -27,8 +28,7 @@ class OpenAIAdapter(ProviderAdapter):
     def provider_name(self) -> str:
         return self._provider_name
 
-    @staticmethod
-    def get_model_id(payload: dict[str, Any]) -> str:
+    def get_model_id(self, payload: dict[str, Any]) -> str:
         """Get the model ID from the payload"""
         if "id" in payload:
             return payload["id"]
@@ -37,7 +37,11 @@ class OpenAIAdapter(ProviderAdapter):
         elif "model_id" in payload:
             return payload["model_id"]
         else:
-            raise ValueError("Model ID not found in payload")
+            logger.error(f"Model ID not found in payload for {self.provider_name}")
+            raise BaseInvalidRequestException(
+                provider_name=self.provider_name,
+                error=ValueError("Model ID not found in payload")
+            )
 
     async def list_models(
         self,
@@ -66,7 +70,12 @@ class OpenAIAdapter(ProviderAdapter):
         ):
             if response.status != HTTPStatus.OK:
                 error_text = await response.text()
-                raise ValueError(f"{self.provider_name} API error: {error_text}")
+                logger.error(f"List Models API error for {self.provider_name}: {error_text}")
+                raise ProviderAPIException(
+                    provider_name=self.provider_name,
+                    error_code=response.status,
+                    error_message=error_text
+                )
             resp = await response.json()
 
             # Better compatibility with Forge
@@ -113,15 +122,17 @@ class OpenAIAdapter(ProviderAdapter):
                 ):
                     if response.status != HTTPStatus.OK:
                         error_text = await response.text()
-                        raise ValueError(
-                            f"{self.provider_name} API error: {error_text}"
+                        logger.error(f"Completion Streaming API error for {self.provider_name}: {error_text}")
+                        raise ProviderAPIException(
+                            provider_name=self.provider_name,
+                            error_code=response.status,
+                            error_message=error_text
                         )
 
                     # Stream the response back
                     async for chunk in response.content:
                         if self.provider_name == "azure":
                             chunk = self.process_streaming_chunk(chunk)
-                        logger.info(f"OpenAI streaming chunk: {chunk}")
                         if chunk:
                             yield chunk
 
@@ -137,7 +148,12 @@ class OpenAIAdapter(ProviderAdapter):
             ):
                 if response.status != HTTPStatus.OK:
                     error_text = await response.text()
-                    raise ValueError(f"{self.provider_name} API error: {error_text}")
+                    logger.error(f"Completion API error for {self.provider_name}: {error_text}")
+                    raise ProviderAPIException(
+                        provider_name=self.provider_name,
+                        error_code=response.status,
+                        error_message=error_text
+                    )
 
                 return await response.json()
 
@@ -161,7 +177,12 @@ class OpenAIAdapter(ProviderAdapter):
         ):
             if response.status != HTTPStatus.OK:
                 error_text = await response.text()
-                raise ValueError(f"{self.provider_name} API error: {error_text}")
+                logger.error(f"Image Generation API error for {self.provider_name}: {error_text}")
+                raise ProviderAPIException(
+                    provider_name=self.provider_name,
+                    error_code=response.status,
+                    error_message=error_text
+                )
 
             return await response.json()
 
@@ -185,7 +206,12 @@ class OpenAIAdapter(ProviderAdapter):
         ):
             if response.status != HTTPStatus.OK:
                 error_text = await response.text()
-                raise ValueError(f"{self.provider_name} API error: {error_text}")
+                logger.error(f"API error for {self.provider_name}: {error_text}")
+                raise ProviderAPIException(
+                    provider_name=self.provider_name,
+                    error_code=response.status,
+                    error_message=error_text
+                )
 
             return await response.json()
     
@@ -211,16 +237,17 @@ class OpenAIAdapter(ProviderAdapter):
         url = f"{base_url or self._base_url}/{endpoint}"
         query_params = query_params or {}
 
-        try:
-            async with (
-                aiohttp.ClientSession() as session,
-                session.post(url, headers=headers, json=payload, params=query_params) as response,
-            ):
-                if response.status != HTTPStatus.OK:
-                    error_text = await response.text()
-                    raise ValueError(f"{self.provider_name} API error: {error_text}")
+        async with (
+            aiohttp.ClientSession() as session,
+            session.post(url, headers=headers, json=payload, params=query_params) as response,
+        ):
+            if response.status != HTTPStatus.OK:
+                error_text = await response.text()
+                logger.error(f"Embeddings API error for {self.provider_name}: {error_text}")
+                raise ProviderAPIException(
+                    provider_name=self.provider_name,
+                    error_code=response.status,
+                    error_message=error_text
+                )
 
-                return await response.json()
-        except Exception as e:
-            logger.error(f"Error in OpenAI embeddings: {str(e)}", exc_info=True)
-            raise
+            return await response.json()
