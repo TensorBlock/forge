@@ -36,6 +36,8 @@ async def _get_allowed_provider_names(
         from app.api.dependencies import get_api_key_from_headers
 
         api_key = await get_api_key_from_headers(request)
+        # Remove the forge- prefix for caching from the API key
+        api_key = api_key[6:]
 
     allowed = getattr(request.state, "allowed_provider_names", None)
     if allowed is not None:
