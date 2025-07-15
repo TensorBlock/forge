@@ -34,77 +34,7 @@ class AnthropicAdapter(ProviderAdapter):
     def provider_name(self) -> str:
         return self._provider_name
 
-    def validate_tools(self, tools: list[dict[str, Any]]) -> None:
-        """Validate tools structure for Anthropic API compatibility"""
-        if not tools:
-            return
-            
-        for i, tool in enumerate(tools):
-            if not isinstance(tool, dict):
-                error_msg = f"Tool at index {i} must be a dictionary"
-                logger.error(f"Anthropic API validation error: {error_msg}")
-                raise BaseInvalidRequestException(
-                    provider_name=self.provider_name,
-                    error=ValueError(error_msg)
-                )
-            
-            # Anthropic uses "function" type for tools
-            if "function" not in tool:
-                error_msg = f"Tool at index {i} must have a 'function' object"
-                logger.error(f"Anthropic API validation error: {error_msg}")
-                raise BaseInvalidRequestException(
-                    provider_name=self.provider_name,
-                    error=ValueError(error_msg)
-                )
-            
-            function = tool["function"]
-            if not isinstance(function, dict):
-                error_msg = f"Function at index {i} must be a dictionary"
-                logger.error(f"Anthropic API validation error: {error_msg}")
-                raise BaseInvalidRequestException(
-                    provider_name=self.provider_name,
-                    error=ValueError(error_msg)
-                )
-            
-            function_name = function.get("name")
-            if not function_name or not isinstance(function_name, str):
-                error_msg = f"Function at index {i} must have a valid 'name' string"
-                logger.error(f"Anthropic API validation error: {error_msg}")
-                raise BaseInvalidRequestException(
-                    provider_name=self.provider_name,
-                    error=ValueError(error_msg)
-                )
 
-    def validate_messages(self, messages: list[dict[str, Any]]) -> None:
-        """Validate message structure for Anthropic API compatibility"""
-        if not messages:
-            return
-            
-        for i, message in enumerate(messages):
-            role = message.get("role")
-            
-            # Check for tool messages that don't have proper preceding tool_calls
-            if role == "tool":
-                # Find the preceding assistant message with tool_calls
-                has_preceding_tool_calls = False
-                for j in range(i - 1, -1, -1):
-                    prev_message = messages[j]
-                    if prev_message.get("role") == "assistant":
-                        if "tool_calls" in prev_message:
-                            has_preceding_tool_calls = True
-                            break
-                        elif "content" in prev_message:
-                            # If assistant message has content but no tool_calls, 
-                            # it's not a valid preceding message for tool role
-                            break
-                
-                if not has_preceding_tool_calls:
-                    error_msg = f"Message at index {i} with role 'tool' must be a response to a preceding message with 'tool_calls'"
-                    logger.error(f"Anthropic API validation error: {error_msg}")
-                    raise BaseInvalidRequestException(
-                        provider_name=self.provider_name,
-                        error=ValueError(error_msg)
-                    )
 
     @staticmethod
     def convert_openai_image_content_to_anthropic(
@@ -199,13 +129,6 @@ class AnthropicAdapter(ProviderAdapter):
         api_key: str,
     ) -> Any:
         """Process a completion request using Anthropic API"""
-        # Validate tools if present
-        if "tools" in payload:
-            self.validate_tools(payload["tools"])
-        
-        # Validate messages for tool role if present
-        if "messages" in payload:
-            self.validate_messages(payload["messages"])
         
         headers = {
             "x-api-key": api_key,
