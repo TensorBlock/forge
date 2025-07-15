@@ -13,7 +13,7 @@ from app.api.schemas.forge_api_key import (
     ForgeApiKeyResponse,
     ForgeApiKeyUpdate,
 )
-from app.core.cache import invalidate_provider_service_cache, invalidate_user_cache
+from app.core.cache import invalidate_provider_service_cache, invalidate_user_cache, invalidate_forge_scope_cache
 from app.core.database import get_db
 from app.core.security import generate_forge_api_key
 from app.models.forge_api_key import ForgeApiKey
@@ -137,6 +137,10 @@ def _update_api_key_internal(
     db.commit()
     db.refresh(db_api_key)
 
+    # Invalidate forge scope cache if the scope was updated
+    if api_key_update.allowed_provider_key_ids is not None:
+        invalidate_forge_scope_cache(db_api_key.key)
+
     response_data = db_api_key.__dict__.copy()
     response_data["allowed_provider_key_ids"] = [
         pk.id for pk in db_api_key.allowed_provider_keys
@@ -174,6 +178,7 @@ def _delete_api_key_internal(
     db.commit()
 
     invalidate_user_cache(key_to_invalidate)
+    invalidate_forge_scope_cache(key_to_invalidate)
     invalidate_provider_service_cache(current_user.id)
     return ForgeApiKeyResponse(**response_data)
 
@@ -195,6 +200,7 @@ def _regenerate_api_key_internal(
     # Invalidate caches for the old key
     old_key = db_api_key.key
     invalidate_user_cache(old_key)
+    invalidate_forge_scope_cache(old_key)
     invalidate_provider_service_cache(current_user.id)
 
     # Generate and set new key

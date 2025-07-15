@@ -4,11 +4,13 @@ Unit tests for cache invalidation behavior when Forge API key scope is updated.
 Tests the fix for issue #8: Newly added provider not reflected in allowed provider list for Forge key
 """
 
-import pytest
-from unittest.mock import MagicMock, patch
-from app.core.cache import invalidate_forge_scope_cache
-from app.core.async_cache import invalidate_forge_scope_cache_async
 import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from app.core.async_cache import invalidate_forge_scope_cache_async
+from app.core.cache import invalidate_forge_scope_cache
 
 
 class TestForgeKeyCacheInvalidation:
@@ -65,7 +67,6 @@ class TestForgeKeyCacheInvalidation:
         """Test that async cache invalidation works correctly with forge- prefix"""
         # Mock the async_provider_service_cache
         with patch('app.core.async_cache.async_provider_service_cache') as mock_cache:
-            from unittest.mock import AsyncMock
             mock_cache.delete = AsyncMock()
             
             # Test with full API key (including forge- prefix)
@@ -82,7 +83,6 @@ class TestForgeKeyCacheInvalidation:
         """Test that async cache invalidation works correctly without forge- prefix"""
         # Mock the async_provider_service_cache
         with patch('app.core.async_cache.async_provider_service_cache') as mock_cache:
-            from unittest.mock import AsyncMock
             mock_cache.delete = AsyncMock()
             
             # Test with stripped API key (without forge- prefix)

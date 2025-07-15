@@ -184,7 +184,11 @@ async def invalidate_user_cache_async(api_key: str) -> None:
 
 
 async def invalidate_forge_scope_cache_async(api_key: str) -> None:
-    """Invalidate forge scope cache for a specific API key asynchronously"""
+    """Invalidate forge scope cache for a specific API key asynchronously.
+    
+    Args:
+        api_key (str): The API key to invalidate cache for. Can include or exclude 'forge-' prefix.
+    """
     if not api_key:
         return
     
