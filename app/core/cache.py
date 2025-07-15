@@ -170,6 +170,29 @@ def invalidate_user_cache(api_key: str) -> None:
     user_cache.delete(f"user:{api_key}")
 
 
+def invalidate_forge_scope_cache(api_key: str) -> None:
+    """Invalidate forge scope cache for a specific API key.
+    
+    Args:
+        api_key (str): The API key to invalidate cache for. Can include or exclude 'forge-' prefix.
+    """
+    if not api_key:
+        return
+    
+    # The cache key format uses the API key WITHOUT the "forge-" prefix
+    # to match how it's set in get_user_by_api_key()
+    cache_key = api_key
+    if cache_key.startswith("forge-"):
+        cache_key = cache_key[6:]  # Remove "forge-" prefix to match cache setting format
+    
+    provider_service_cache.delete(f"forge_scope:{cache_key}")
+    
+    if DEBUG_CACHE:
+        # Mask the API key for logging
+        masked_key = cache_key[:8] + "..." if len(cache_key) > 8 else cache_key
+        logger.debug(f"Cache: Invalidated forge scope cache for API key: {masked_key}")
+
+
 # Provider service functions
 def get_cached_provider_service(user_id: int) -> Any:
     """Get a provider service from cache by user ID"""
