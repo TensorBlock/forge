@@ -51,7 +51,7 @@ async def _get_allowed_provider_names(
         forge_key = (
             db.query(ForgeApiKey)
             .options(joinedload(ForgeApiKey.allowed_provider_keys))
-            .filter(ForgeApiKey.key == api_key, ForgeApiKey.is_active)
+            .filter(ForgeApiKey.key == f"forge-{api_key}", ForgeApiKey.is_active)
             .first()
         )
         if forge_key is None:
