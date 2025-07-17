@@ -13,7 +13,7 @@ from app.api.schemas.forge_api_key import (
     ForgeApiKeyResponse,
     ForgeApiKeyUpdate,
 )
-from app.core.cache import invalidate_provider_service_cache, invalidate_user_cache, invalidate_forge_scope_cache
+from app.core.async_cache import invalidate_forge_scope_cache_async, invalidate_user_cache_async, invalidate_provider_service_cache_async
 from app.core.database import get_db
 from app.core.security import generate_forge_api_key
 from app.models.forge_api_key import ForgeApiKey
@@ -25,7 +25,7 @@ router = APIRouter()
 # --- Internal Service Functions ---
 
 
-def _get_api_keys_internal(
+async def _get_api_keys_internal(
     db: Session, current_user: UserModel
 ) -> list[ForgeApiKeyMasked]:
     """
@@ -47,7 +47,7 @@ def _get_api_keys_internal(
     return masked_keys
 
 
-def _create_api_key_internal(
+async def _create_api_key_internal(
     api_key_create: ForgeApiKeyCreate, db: Session, current_user: UserModel
 ) -> ForgeApiKeyResponse:
     """
@@ -91,7 +91,7 @@ def _create_api_key_internal(
     return ForgeApiKeyResponse(**response_data)
 
 
-def _update_api_key_internal(
+async def _update_api_key_internal(
     key_id: int, api_key_update: ForgeApiKeyUpdate, db: Session, current_user: UserModel
 ) -> ForgeApiKeyResponse:
     """
@@ -112,7 +112,7 @@ def _update_api_key_internal(
         old_active_state = db_api_key.is_active
         db_api_key.is_active = update_data["is_active"]
         if old_active_state and not db_api_key.is_active:
-            invalidate_user_cache(db_api_key.key)
+            await invalidate_user_cache_async(db_api_key.key)
 
     if api_key_update.allowed_provider_key_ids is not None:
         db_api_key.allowed_provider_keys.clear()
@@ -139,7 +139,7 @@ def _update_api_key_internal(
 
     # Invalidate forge scope cache if the scope was updated
     if api_key_update.allowed_provider_key_ids is not None:
-        invalidate_forge_scope_cache(db_api_key.key)
+        await invalidate_forge_scope_cache_async(db_api_key.key)
 
     response_data = db_api_key.__dict__.copy()
     response_data["allowed_provider_key_ids"] = [
@@ -148,7 +148,7 @@ def _update_api_key_internal(
     return ForgeApiKeyResponse(**response_data)
 
 
-def _delete_api_key_internal(
+async def _delete_api_key_internal(
     key_id: int, db: Session, current_user: UserModel
 ) -> ForgeApiKeyResponse:
     """
@@ -177,13 +177,13 @@ def _delete_api_key_internal(
     db.delete(db_api_key)
     db.commit()
 
-    invalidate_user_cache(key_to_invalidate)
-    invalidate_forge_scope_cache(key_to_invalidate)
-    invalidate_provider_service_cache(current_user.id)
+    await invalidate_user_cache_async(key_to_invalidate)
+    await invalidate_forge_scope_cache_async(key_to_invalidate)
+    await invalidate_provider_service_cache_async(current_user.id)
     return ForgeApiKeyResponse(**response_data)
 
 
-def _regenerate_api_key_internal(
+async def _regenerate_api_key_internal(
     key_id: int, db: Session, current_user: UserModel
 ) -> ForgeApiKeyResponse:
     """
@@ -199,9 +199,9 @@ def _regenerate_api_key_internal(
 
     # Invalidate caches for the old key
     old_key = db_api_key.key
-    invalidate_user_cache(old_key)
-    invalidate_forge_scope_cache(old_key)
-    invalidate_provider_service_cache(current_user.id)
+    await invalidate_user_cache_async(old_key)
+    await invalidate_forge_scope_cache_async(old_key)
+    await invalidate_provider_service_cache_async(current_user.id)
 
     # Generate and set new key
     new_key_value = generate_forge_api_key()
@@ -221,91 +221,91 @@ def _regenerate_api_key_internal(
 
 
 @router.get("/", response_model=list[ForgeApiKeyMasked])
-def get_api_keys(
+async def get_api_keys(
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_active_user),
 ) -> Any:
-    return _get_api_keys_internal(db, current_user)
+    return await _get_api_keys_internal(db, current_user)
 
 
 @router.post("/", response_model=ForgeApiKeyResponse)
-def create_api_key(
+async def create_api_key(
     api_key_create: ForgeApiKeyCreate,
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_active_user),
 ) -> Any:
-    return _create_api_key_internal(api_key_create, db, current_user)
+    return await _create_api_key_internal(api_key_create, db, current_user)
 
 
 @router.put("/{key_id}", response_model=ForgeApiKeyResponse)
-def update_api_key(
+async def update_api_key(
     key_id: int,
     api_key_update: ForgeApiKeyUpdate,
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_active_user),
 ) -> Any:
-    return _update_api_key_internal(key_id, api_key_update, db, current_user)
+    return await _update_api_key_internal(key_id, api_key_update, db, current_user)
 
 
 @router.delete("/{key_id}", response_model=ForgeApiKeyResponse)
-def delete_api_key(
+async def delete_api_key(
     key_id: int,
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_active_user),
 ) -> Any:
-    return _delete_api_key_internal(key_id, db, current_user)
+    return await _delete_api_key_internal(key_id, db, current_user)
 
 
 @router.post("/{key_id}/regenerate", response_model=ForgeApiKeyResponse)
-def regenerate_api_key(
+async def regenerate_api_key(
     key_id: int,
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_active_user),
 ) -> Any:
-    return _regenerate_api_key_internal(key_id, db, current_user)
+    return await _regenerate_api_key_internal(key_id, db, current_user)
 
 
 # Clerk versions of the routes
 @router.get("/clerk", response_model=list[ForgeApiKeyMasked])
-def get_api_keys_clerk(
+async def get_api_keys_clerk(
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_active_user_from_clerk),
 ) -> Any:
-    return _get_api_keys_internal(db, current_user)
+    return await _get_api_keys_internal(db, current_user)
 
 
 @router.post("/clerk", response_model=ForgeApiKeyResponse)
-def create_api_key_clerk(
+async def create_api_key_clerk(
     api_key_create: ForgeApiKeyCreate,
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_active_user_from_clerk),
 ) -> Any:
-    return _create_api_key_internal(api_key_create, db, current_user)
+    return await _create_api_key_internal(api_key_create, db, current_user)
 
 
 @router.put("/clerk/{key_id}", response_model=ForgeApiKeyResponse)
-def update_api_key_clerk(
+async def update_api_key_clerk(
     key_id: int,
     api_key_update: ForgeApiKeyUpdate,
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_active_user_from_clerk),
 ) -> Any:
-    return _update_api_key_internal(key_id, api_key_update, db, current_user)
+    return await _update_api_key_internal(key_id, api_key_update, db, current_user)
 
 
 @router.delete("/clerk/{key_id}", response_model=ForgeApiKeyResponse)
-def delete_api_key_clerk(
+async def delete_api_key_clerk(
     key_id: int,
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_active_user_from_clerk),
 ) -> Any:
-    return _delete_api_key_internal(key_id, db, current_user)
+    return await _delete_api_key_internal(key_id, db, current_user)
 
 
 @router.post("/clerk/{key_id}/regenerate", response_model=ForgeApiKeyResponse)
-def regenerate_api_key_clerk(
+async def regenerate_api_key_clerk(
     key_id: int,
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_active_user_from_clerk),
 ) -> Any:
-    return _regenerate_api_key_internal(key_id, db, current_user)
+    return await _regenerate_api_key_internal(key_id, db, current_user)

@@ -17,10 +17,11 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.api.schemas.user import TokenData
 from app.core.async_cache import (
-    async_provider_service_cache,
     cache_user_async,
     get_cached_user_async,
     invalidate_user_cache_async,
+    forge_scope_cache_async,
+    get_forge_scope_cache_async,
 )
 from app.core.database import get_db
 from app.core.logger import get_logger
@@ -180,8 +181,7 @@ async def get_user_by_api_key(
 
     # Try scope cache first – this doesn't remove the need to verify the key, but it
     # avoids an extra query later in /models.
-    scope_cache_key = f"forge_scope:{api_key}"
-    cached_scope = await async_provider_service_cache.get(scope_cache_key)
+    cached_scope = await get_forge_scope_cache_async(api_key)
 
     api_key_record = (
         db.query(ForgeApiKey)
@@ -219,9 +219,7 @@ async def get_user_by_api_key(
             pk.provider_name for pk in api_key_record.allowed_provider_keys
         ]
         # Cache it (short TTL – scope changes are rare)
-        await async_provider_service_cache.set(
-            scope_cache_key, allowed_provider_names, ttl=300
-        )
+        await forge_scope_cache_async(api_key, allowed_provider_names, ttl=300)
     else:
         allowed_provider_names = cached_scope
 
