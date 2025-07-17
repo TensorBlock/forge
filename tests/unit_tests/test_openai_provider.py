@@ -2,6 +2,7 @@ import json
 import os
 from unittest import IsolatedAsyncioTestCase as TestCase
 from unittest.mock import patch
+import pytest
 
 from app.services.providers.openai_adapter import OpenAIAdapter
 from tests.unit_tests.utils.helpers import (
@@ -108,3 +109,5 @@ class TestOpenAIProvider(TestCase):
                 expected_model="gpt-4o-mini-2024-07-18",
                 expected_message=OPENAAI_STANDARD_CHAT_COMPLETION_RESPONSE,
             )
+
+

@@ -28,6 +28,8 @@ class OpenAIAdapter(ProviderAdapter):
     def provider_name(self) -> str:
         return self._provider_name
 
+
+
     def get_model_id(self, payload: dict[str, Any]) -> str:
         """Get the model ID from the payload"""
         if "id" in payload:
@@ -100,6 +102,7 @@ class OpenAIAdapter(ProviderAdapter):
         query_params: dict[str, Any] = None,
     ) -> Any:
         """Process a completion request using OpenAI API"""
+            
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
