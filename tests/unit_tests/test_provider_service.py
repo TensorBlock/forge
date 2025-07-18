@@ -22,13 +22,13 @@ from app.models.provider_key import ProviderKey
 from app.models.user import User
 from app.services.provider_service import ProviderService
 from app.services.providers.adapter_factory import ProviderAdapterFactory
-from app.core.cache import provider_service_cache, user_cache
+from app.core.async_cache import async_provider_service_cache, async_user_cache
 
 
 class TestProviderService(TestCase):
     """Test the provider service"""
 
-    def setUp(self):
+    async def asyncSetUp(self):
         # Reset the adapters cache
         ProviderService._adapters_cache = {}
 
@@ -108,12 +108,12 @@ class TestProviderService(TestCase):
             self.provider_key_bedrock,
         ]
 
-        # Mock DB
-        self.db = MagicMock()
+        # Mock AsyncSession DB
+        self.db = AsyncMock()
 
         # Clear caches
-        provider_service_cache.clear()
-        user_cache.clear()
+        await async_provider_service_cache.clear()
+        await async_user_cache.clear()
 
         # Create the service with patched decrypt_api_key to avoid actual decryption
         with patch("app.services.provider_service.decrypt_api_key") as mock_decrypt:
@@ -141,8 +141,11 @@ class TestProviderService(TestCase):
             # Mock user.id for the new constructor signature
             self.user.id = 1
 
-            # Mock the database query for provider keys
-            self.db.query.return_value.filter.return_value.all.return_value = [
+            # Mock the async database execute() pattern for provider keys
+            # Create mock result object
+            mock_result = MagicMock()  # Result object should be sync, not AsyncMock
+            mock_scalars = MagicMock()  # Don't use AsyncMock for scalars object
+            mock_scalars.all.return_value = [
                 self.provider_key_openai,
                 self.provider_key_anthropic,
                 self.provider_key_google,
@@ -153,11 +156,13 @@ class TestProviderService(TestCase):
                 self.provider_key_azure,
                 self.provider_key_bedrock,
             ]
+            mock_result.scalars.return_value = mock_scalars  # scalars() returns sync object
+            self.db.execute = AsyncMock(return_value=mock_result)  # Only execute() is async
 
             self.service = ProviderService(self.user.id, self.db)
 
             # Pre-load the keys for testing
-            self.service._load_provider_keys()
+            await self.service._load_provider_keys_async()
 
     async def test_load_provider_keys(self):
         """Test loading provider keys"""

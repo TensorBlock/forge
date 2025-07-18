@@ -10,7 +10,8 @@ import time
 from collections.abc import Callable
 from typing import Any, TypeVar
 
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from app.api.schemas.cached_user import CachedUser
 from app.core.logger import get_logger
@@ -391,7 +392,7 @@ async def invalidate_all_caches_async() -> None:
         logger.debug("Cache: Invalidated all caches")
 
 
-async def warm_cache_async(db: Session) -> None:
+async def warm_cache_async(db: AsyncSession) -> None:
     """Pre-cache frequently accessed data asynchronously"""
     from app.models.user import User
     from app.services.provider_service import ProviderService
@@ -400,14 +401,17 @@ async def warm_cache_async(db: Session) -> None:
         logger.info("Cache: Starting cache warm-up...")
 
     # Cache active users
-    active_users = db.query(User).filter(User.is_active).all()
+    result = await db.execute(select(User).filter(User.is_active))
+    active_users = result.scalars().all()
+    
     for user in active_users:
         # Get user's Forge API keys
-        forge_api_keys = (
-            db.query(ForgeApiKey)
+        result = await db.execute(
+            select(ForgeApiKey)
             .filter(ForgeApiKey.user_id == user.id, ForgeApiKey.is_active)
-            .all()
         )
+        forge_api_keys = result.scalars().all()
+        
         for key in forge_api_keys:
             await cache_user_async(key.key, user)
 

@@ -2,7 +2,8 @@ import json
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
 from app.api.dependencies import (
@@ -15,12 +16,12 @@ from app.api.schemas.provider_key import (
     ProviderKeyUpdate,
     ProviderKeyUpsertItem,
 )
-from app.core.cache import invalidate_provider_service_cache
-from app.core.database import get_db
+from app.core.async_cache import invalidate_provider_service_cache_async
+from app.core.database import get_async_db
 from app.core.logger import get_logger
 from app.core.security import decrypt_api_key, encrypt_api_key
 from app.models.provider_key import ProviderKey as ProviderKeyModel
-from app.models.user import User
+from app.models.user import User as UserModel
 from app.services.providers.adapter_factory import ProviderAdapterFactory
 
 logger = get_logger(name="provider_keys")
@@ -30,234 +31,212 @@ router = APIRouter()
 # --- Internal Service Functions ---
 
 
-def _get_provider_keys_internal(
-    db: Session, current_user: User
-) -> list[ProviderKeyModel]:
-    """Internal. Retrieve all provider keys for the current user."""
-    return (
-        db.query(ProviderKeyModel)
-        .filter(ProviderKeyModel.user_id == current_user.id)
-        .all()
+async def _get_provider_keys_internal(
+    db: AsyncSession, current_user: UserModel
+) -> list[ProviderKey]:
+    """
+    Internal logic to get all provider keys for the current user.
+    """
+    result = await db.execute(
+        select(ProviderKeyModel).filter(ProviderKeyModel.user_id == current_user.id)
     )
+    provider_keys = result.scalars().all()
+    return [ProviderKey.model_validate(pk) for pk in provider_keys]
 
 
-def _create_provider_key_internal(
-    provider_key_in: ProviderKeyCreate, db: Session, current_user: User
-) -> ProviderKeyModel:
-    """Internal. Create a new provider key."""
-    existing_key = (
-        db.query(ProviderKeyModel)
-        .filter(
+async def _create_provider_key_internal(
+    provider_key_create: ProviderKeyCreate, db: AsyncSession, current_user: UserModel
+) -> ProviderKey:
+    """
+    Internal logic to create a new provider key for the current user.
+    """
+    # Check if provider already exists for user
+    result = await db.execute(
+        select(ProviderKeyModel).filter(
             ProviderKeyModel.user_id == current_user.id,
-            ProviderKeyModel.provider_name == provider_key_in.provider_name,
+            ProviderKeyModel.provider_name == provider_key_create.provider_name,
         )
-        .first()
     )
+    existing_key = result.scalar_one_or_none()
+    
     if existing_key:
         raise HTTPException(
             status_code=400,
-            detail=f"A key for provider {provider_key_in.provider_name} already exists",
+            detail=f"Provider key for {provider_key_create.provider_name} already exists",
         )
 
-    model_mapping_json = (
-        json.dumps(provider_key_in.model_mapping)
-        if provider_key_in.model_mapping
-        else None
-    )
-
-    provider_name = provider_key_in.provider_name
-    provider_adapter_cls = ProviderAdapterFactory.get_adapter_cls(provider_name)
-
-    # try to initialize the provider adapter
-    try:
-        provider_adapter_cls(
-            provider_name, provider_key_in.base_url, config=provider_key_in.config
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Error initializing provider {provider_name}: {e}",
-        )
-
-    serialized_api_key_config = provider_adapter_cls.serialize_api_key_config(
-        provider_key_in.api_key, provider_key_in.config
-    )
-
-    provider_key = ProviderKeyModel(
-        provider_name=provider_name,
-        encrypted_api_key=encrypt_api_key(serialized_api_key_config),
+    encrypted_key = encrypt_api_key(provider_key_create.api_key)
+    db_provider_key = ProviderKeyModel(
         user_id=current_user.id,
-        base_url=provider_key_in.base_url,
-        model_mapping=model_mapping_json,
+        provider_name=provider_key_create.provider_name,
+        encrypted_api_key=encrypted_key,
+        base_url=provider_key_create.base_url,
+        model_mapping=provider_key_create.model_mapping,
     )
-    db.add(provider_key)
-    db.commit()
-    db.refresh(provider_key)
-    invalidate_provider_service_cache(current_user.id)
-    return provider_key
+    db.add(db_provider_key)
+    await db.commit()
+    await db.refresh(db_provider_key)
+
+    # Invalidate caches after creating a new provider key
+    await invalidate_provider_service_cache_async(current_user.id)
+
+    return ProviderKey.model_validate(db_provider_key)
 
 
-def _update_provider_key_internal(
-    provider_name: str,
-    provider_key_in: ProviderKeyUpdate,
-    db: Session,
-    current_user: User,
-) -> ProviderKeyModel:
-    """Internal. Update a provider key."""
-    provider_key = (
-        db.query(ProviderKeyModel)
-        .filter(
+async def _update_provider_key_internal(
+    key_id: int,
+    provider_key_update: ProviderKeyUpdate,
+    db: AsyncSession,
+    current_user: UserModel,
+) -> ProviderKey:
+    """
+    Internal logic to update a provider key for the current user.
+    """
+    result = await db.execute(
+        select(ProviderKeyModel).filter(
+            ProviderKeyModel.id == key_id,
             ProviderKeyModel.user_id == current_user.id,
-            ProviderKeyModel.provider_name == provider_name,
         )
-        .first()
     )
-    if not provider_key:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Provider key for {provider_name} not found",
-        )
+    db_provider_key = result.scalar_one_or_none()
+    
+    if not db_provider_key:
+        raise HTTPException(status_code=404, detail="Provider key not found")
 
-    # try to initialize the provider adapter if key info is provided
-    try:
-        provider_adapter_cls = ProviderAdapterFactory.get_adapter_cls(provider_name)
-        _, old_config = provider_adapter_cls.deserialize_api_key_config(
-            decrypt_api_key(provider_key.encrypted_api_key)
-        )
-        if provider_key_in.api_key or provider_key_in.config:
-            serialized_api_key_config = provider_adapter_cls.serialize_api_key_config(
-                provider_key_in.api_key, provider_key_in.config
-            )
-            provider_key.encrypted_api_key = encrypt_api_key(serialized_api_key_config)
-        if provider_key_in.base_url is not None:
-            provider_key.base_url = provider_key_in.base_url
-        if provider_key_in.model_mapping is not None:
-            provider_key.model_mapping = json.dumps(provider_key_in.model_mapping)
+    update_data = provider_key_update.model_dump(exclude_unset=True)
+    if "api_key" in update_data:
+        update_data["encrypted_api_key"] = encrypt_api_key(update_data.pop("api_key"))
 
-        provider_adapter_cls(
-            provider_name,
-            provider_key.base_url,
-            config=provider_key_in.config or old_config,
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Error initializing provider {provider_name}: {e}",
-        )
+    for field, value in update_data.items():
+        setattr(db_provider_key, field, value)
 
-    db.commit()
-    db.refresh(provider_key)
-    invalidate_provider_service_cache(current_user.id)
-    return provider_key
+    await db.commit()
+    await db.refresh(db_provider_key)
+
+    # Invalidate caches after updating a provider key
+    await invalidate_provider_service_cache_async(current_user.id)
+
+    return ProviderKey.model_validate(db_provider_key)
 
 
-def _delete_provider_key_internal(
-    provider_name: str, db: Session, current_user: User
-) -> ProviderKeyModel:
-    """Internal. Delete a provider key."""
-    provider_key = (
-        db.query(ProviderKeyModel)
-        .filter(
+async def _delete_provider_key_internal(
+    key_id: int, db: AsyncSession, current_user: UserModel
+) -> ProviderKey:
+    """
+    Internal logic to delete a provider key for the current user.
+    """
+    result = await db.execute(
+        select(ProviderKeyModel).filter(
+            ProviderKeyModel.id == key_id,
             ProviderKeyModel.user_id == current_user.id,
-            ProviderKeyModel.provider_name == provider_name,
         )
-        .first()
     )
-    if not provider_key:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Provider key for {provider_name} not found",
-        )
-    db.delete(provider_key)
-    db.commit()
-    invalidate_provider_service_cache(current_user.id)
-    return provider_key
+    db_provider_key = result.scalar_one_or_none()
+    
+    if not db_provider_key:
+        raise HTTPException(status_code=404, detail="Provider key not found")
+
+    # Store the provider key data before deletion
+    provider_key_data = ProviderKey.model_validate(db_provider_key)
+
+    await db.delete(db_provider_key)
+    await db.commit()
+
+    # Invalidate caches after deleting a provider key
+    await invalidate_provider_service_cache_async(current_user.id)
+
+    return provider_key_data
+
+
+# --- API Endpoints ---
 
 
 @router.get("/", response_model=list[ProviderKey])
-def get_provider_keys(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+async def get_provider_keys(
+    db: AsyncSession = Depends(get_async_db),
+    current_user: UserModel = Depends(get_current_active_user),
 ) -> Any:
-    return _get_provider_keys_internal(db, current_user)
+    return await _get_provider_keys_internal(db, current_user)
 
 
 @router.post("/", response_model=ProviderKey)
-def create_provider_key(
-    provider_key_in: ProviderKeyCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+async def create_provider_key(
+    provider_key_create: ProviderKeyCreate,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: UserModel = Depends(get_current_active_user),
 ) -> Any:
-    return _create_provider_key_internal(provider_key_in, db, current_user)
+    return await _create_provider_key_internal(provider_key_create, db, current_user)
 
 
-@router.put("/{provider_name}", response_model=ProviderKey)
-def update_provider_key(
-    provider_name: str,
-    provider_key_in: ProviderKeyUpdate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+@router.put("/{key_id}", response_model=ProviderKey)
+async def update_provider_key(
+    key_id: int,
+    provider_key_update: ProviderKeyUpdate,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: UserModel = Depends(get_current_active_user),
 ) -> Any:
-    return _update_provider_key_internal(
-        provider_name, provider_key_in, db, current_user
+    return await _update_provider_key_internal(
+        key_id, provider_key_update, db, current_user
     )
 
 
-@router.delete("/{provider_name}", response_model=ProviderKey)
-def delete_provider_key(
-    provider_name: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+@router.delete("/{key_id}", response_model=ProviderKey)
+async def delete_provider_key(
+    key_id: int,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: UserModel = Depends(get_current_active_user),
 ) -> Any:
-    return _delete_provider_key_internal(provider_name, db, current_user)
+    return await _delete_provider_key_internal(key_id, db, current_user)
 
 
-# Clerk versions of the routes
+# --- Clerk API Routes ---
+
+
 @router.get("/clerk", response_model=list[ProviderKey])
-def get_provider_keys_clerk(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user_from_clerk),
+async def get_provider_keys_clerk(
+    db: AsyncSession = Depends(get_async_db),
+    current_user: UserModel = Depends(get_current_active_user_from_clerk),
 ) -> Any:
-    return _get_provider_keys_internal(db, current_user)
+    return await _get_provider_keys_internal(db, current_user)
 
 
 @router.post("/clerk", response_model=ProviderKey)
-def create_provider_key_clerk(
-    provider_key_in: ProviderKeyCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user_from_clerk),
+async def create_provider_key_clerk(
+    provider_key_create: ProviderKeyCreate,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: UserModel = Depends(get_current_active_user_from_clerk),
 ) -> Any:
-    return _create_provider_key_internal(provider_key_in, db, current_user)
+    return await _create_provider_key_internal(provider_key_create, db, current_user)
 
 
-@router.put("/clerk/{provider_name}", response_model=ProviderKey)
-def update_provider_key_clerk(
-    provider_name: str,
-    provider_key_in: ProviderKeyUpdate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user_from_clerk),
+@router.put("/clerk/{key_id}", response_model=ProviderKey)
+async def update_provider_key_clerk(
+    key_id: int,
+    provider_key_update: ProviderKeyUpdate,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: UserModel = Depends(get_current_active_user_from_clerk),
 ) -> Any:
-    return _update_provider_key_internal(
-        provider_name, provider_key_in, db, current_user
+    return await _update_provider_key_internal(
+        key_id, provider_key_update, db, current_user
     )
 
 
-@router.delete("/clerk/{provider_name}", response_model=ProviderKey)
-def delete_provider_key_clerk(
-    provider_name: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user_from_clerk),
+@router.delete("/clerk/{key_id}", response_model=ProviderKey)
+async def delete_provider_key_clerk(
+    key_id: int,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: UserModel = Depends(get_current_active_user_from_clerk),
 ) -> Any:
-    return _delete_provider_key_internal(provider_name, db, current_user)
+    return await _delete_provider_key_internal(key_id, db, current_user)
 
 
 # --- Batch Upsert API Endpoint ---
 
 
-def _batch_upsert_provider_keys_internal(
+async def _batch_upsert_provider_keys_internal(
     items: list[ProviderKeyUpsertItem],
-    db: Session,
-    current_user: User,
+    db: AsyncSession,
+    current_user: UserModel,
 ) -> list[ProviderKeyModel]:
     """
     Internal logic for batch creating or updating provider keys for the current user.
@@ -265,11 +244,10 @@ def _batch_upsert_provider_keys_internal(
     processed_keys: list[ProviderKeyModel] = []
 
     # 1. Fetch all existing keys for the user
-    existing_keys_query = (
-        db.query(ProviderKeyModel)
-        .filter(ProviderKeyModel.user_id == current_user.id)
-        .all()
+    result = await db.execute(
+        select(ProviderKeyModel).filter(ProviderKeyModel.user_id == current_user.id)
     )
+    existing_keys_query = result.scalars().all()
     # 2. Map them by provider_name for efficient lookup
     existing_keys_map: dict[str, ProviderKeyModel] = {
         key.provider_name: key for key in existing_keys_query
@@ -282,7 +260,7 @@ def _batch_upsert_provider_keys_internal(
             # Handle deletion if api_key is "DELETE"
             if item.api_key == "DELETE":
                 try:
-                    _delete_provider_key_internal(item.provider_name, db, current_user)
+                    await _delete_provider_key_internal(item.provider_name, db, current_user)
                 except HTTPException as e:
                     if (
                         e.status_code != status.HTTP_404_NOT_FOUND
@@ -392,14 +370,14 @@ def _batch_upsert_provider_keys_internal(
 
     if processed_keys:
         try:
-            db.commit()
+            await db.commit()
             for key in processed_keys:
-                db.refresh(
+                await db.refresh(
                     key
                 )  # Refresh each key to get DB-generated values like id, timestamps
-            invalidate_provider_service_cache(current_user.id)
+            await invalidate_provider_service_cache_async(current_user.id)
         except Exception as e:
-            db.rollback()
+            await db.rollback()
             error_message_prefix = "Error during final commit/refresh in batch upsert"
             if hasattr(current_user, "email"):  # Check if it's a full User object
                 error_message_prefix += f" (User: {current_user.email})"
@@ -412,24 +390,24 @@ def _batch_upsert_provider_keys_internal(
 
 
 @router.post("/batch-upsert", response_model=list[ProviderKey])
-def batch_upsert_provider_keys(
+async def batch_upsert_provider_keys(
     items: list[ProviderKeyUpsertItem],
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: UserModel = Depends(get_current_active_user),
 ) -> Any:
     """
     Batch create or update provider keys for the current user.
     """
-    return _batch_upsert_provider_keys_internal(items, db, current_user)
+    return await _batch_upsert_provider_keys_internal(items, db, current_user)
 
 
 @router.post("/clerk/batch-upsert", response_model=list[ProviderKey])
-def batch_upsert_provider_keys_clerk(
+async def batch_upsert_provider_keys_clerk(
     items: list[ProviderKeyUpsertItem],
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user_from_clerk),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: UserModel = Depends(get_current_active_user_from_clerk),
 ) -> Any:
     """
     Batch create or update provider keys for the current user (Clerk authenticated).
     """
-    return _batch_upsert_provider_keys_internal(items, db, current_user)
+    return await _batch_upsert_provider_keys_internal(items, db, current_user)

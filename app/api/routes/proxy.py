@@ -2,7 +2,9 @@ import inspect
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from starlette.responses import StreamingResponse
 
 from app.api.dependencies import get_user_by_api_key
@@ -15,8 +17,9 @@ from app.api.schemas.openai import (
     ImageGenerationRequest,
 )
 from app.core.async_cache import async_provider_service_cache
-from app.core.database import get_db
+from app.core.database import get_async_db
 from app.core.logger import get_logger
+from app.models.forge_api_key import ForgeApiKey
 from app.models.user import User
 from app.services.provider_service import ProviderService
 
@@ -29,7 +32,7 @@ logger = get_logger(name="proxy")
 # None → unrestricted, [] → explicitly no providers.
 # -------------------------------------------------------------
 async def _get_allowed_provider_names(
-    request: Request, db: Session
+    request: Request, db: AsyncSession
 ) -> list[str] | None:
     api_key = getattr(request.state, "forge_api_key", None)
     if api_key is None:
@@ -43,19 +46,15 @@ async def _get_allowed_provider_names(
     if allowed is not None:
         return allowed
 
-    from sqlalchemy.orm import joinedload
-
-    from app.models.forge_api_key import ForgeApiKey
-
     allowed = await async_provider_service_cache.get(f"forge_scope:{api_key}")
 
     if allowed is None:
-        forge_key = (
-            db.query(ForgeApiKey)
-            .options(joinedload(ForgeApiKey.allowed_provider_keys))
+        result = await db.execute(
+            select(ForgeApiKey)
+            .options(selectinload(ForgeApiKey.allowed_provider_keys))
             .filter(ForgeApiKey.key == f"forge-{api_key}", ForgeApiKey.is_active)
-            .first()
         )
+        forge_key = result.scalar_one_or_none()
         if forge_key is None:
             raise HTTPException(
                 status_code=401, detail="Forge API key not found or inactive"
@@ -74,7 +73,7 @@ async def create_chat_completion(
     request: Request,
     chat_request: ChatCompletionRequest,
     user: User = Depends(get_user_by_api_key),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ) -> Any:
     """
     Create a chat completion (OpenAI-compatible endpoint).
@@ -123,7 +122,7 @@ async def create_completion(
     request: Request,
     completion_request: CompletionRequest,
     user: User = Depends(get_user_by_api_key),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ) -> Any:
     """
     Create a completion (OpenAI-compatible endpoint).
@@ -166,7 +165,7 @@ async def create_image_generation(
     request: Request,
     image_generation_request: ImageGenerationRequest,
     user: User = Depends(get_user_by_api_key),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ) -> Any:
     """
     Create an image generation (OpenAI-compatible endpoint).
@@ -197,7 +196,7 @@ async def create_image_edits(
     request: Request,
     image_edits_request: ImageEditsRequest,
     user: User = Depends(get_user_by_api_key),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ) -> Any:
     try:
         provider_service = await ProviderService.async_get_instance(user, db)
@@ -221,7 +220,7 @@ async def create_image_edits(
 async def list_models(
     request: Request,
     user: User = Depends(get_user_by_api_key),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ) -> dict[str, Any]:
     """
     List available models. Only models from providers that are within the scope of the
@@ -237,6 +236,7 @@ async def list_models(
         )
         return {"object": "list", "data": models}
     except Exception as err:
+        logger.error(f"Error listing models: {str(err)}")
         raise HTTPException(
             status_code=500, detail=f"Error listing models: {str(err)}"
         ) from err
@@ -248,7 +248,7 @@ async def create_embeddings(
     request: Request,
     embeddings_request: EmbeddingsRequest,
     user: User = Depends(get_user_by_api_key),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ) -> Any:
     """
     Create embeddings (OpenAI-compatible endpoint).
