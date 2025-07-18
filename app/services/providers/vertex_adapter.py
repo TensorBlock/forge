@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 from typing import Any
@@ -130,19 +131,9 @@ class VertexAdapter(ProviderAdapter):
         # check cache first for existing valid token
         cached_token = await get_cached_oauth_token_async(api_key)
         if cached_token:
-            token_str = cached_token.get("token")
-            expiry_str = cached_token.get("expiry")
-            if token_str and expiry_str:
-                try:
-                    expiry = datetime.fromisoformat(expiry_str)
-                    # Make expiry timezone-aware if it's naive (Google credentials are UTC)
-                    if expiry.tzinfo is None:
-                        expiry = expiry.replace(tzinfo=timezone.utc)
-                    if expiry > datetime.now(timezone.utc):
-                        return token_str
-                except (ValueError, TypeError):
-                    # Invalid cached token, clear it and continue to refresh
-                    await invalidate_oauth_token_cache_async(api_key)
+            access_token = cached_token.get("access_token")
+            if access_token:
+                return access_token
 
         # load credentials within scope
         try:
@@ -154,8 +145,12 @@ class VertexAdapter(ProviderAdapter):
             # cache the token with expiry information
             if credentials.token and credentials.expiry:
                 token_data = {
-                    "token": credentials.token,
-                    "expiry": credentials.expiry.isoformat()
+                    "access_token": credentials.token,
+                    "token_type": "Bearer",
+                    "expires_at": credentials.expiry.timestamp(),  # Unix timestamp
+                    "scope": "https://www.googleapis.com/auth/cloud-platform",
+                    "cached_at": time.time(),  # For debugging
+                    "provider": "vertex"  # Helpful for multi-provider systems
                 }
                 await cache_oauth_token_async(api_key, token_data)
                 
