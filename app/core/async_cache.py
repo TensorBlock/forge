@@ -156,6 +156,8 @@ async_user_cache: "AsyncCache" = _AsyncBackend(ttl_seconds=300)  # 5-min TTL
 async_provider_service_cache: "AsyncCache" = _AsyncBackend(
     ttl_seconds=3600
 )  # 1-hour TTL
+# OAuth2 token caching (55-min TTL with 5-min safety buffer before 1-hour token expiry)
+async_oauth_token_cache: "AsyncCache" = _AsyncBackend(ttl_seconds=3300)  # 55-min TTL
 
 
 # User-specific functions
@@ -336,6 +338,33 @@ async def invalidate_provider_service_cache_async(user_id: int) -> None:
         )
 
 
+# OAuth2 token caching functions
+async def get_cached_oauth_token_async(api_key: str) -> dict[str, Any] | None:
+    """Get a cached OAuth2 token by API key asynchronously"""
+    if not api_key:
+        return None
+    cached_data = await async_oauth_token_cache.get(f"token:{api_key}")
+    if cached_data:
+        return cached_data
+    return None
+
+
+async def cache_oauth_token_async(api_key: str, token_data: dict[str, Any]) -> None:
+    """Cache an OAuth2 token by API key asynchronously"""
+    if not api_key or not token_data:
+        return
+    await async_oauth_token_cache.set(f"token:{api_key}", token_data)
+
+
+async def invalidate_oauth_token_cache_async(api_key: str) -> None:
+    """Invalidate OAuth2 token cache for a specific API key asynchronously"""
+    if not api_key:
+        return
+    await async_oauth_token_cache.delete(f"token:{api_key}")
+    if DEBUG_CACHE:
+        logger.debug(f"Cache: Invalidated OAuth2 token cache for key: {api_key[:8]}...")
+
+
 async def invalidate_provider_models_cache_async(provider_name: str) -> None:
     """Invalidate model cache for a specific provider asynchronously"""
     if not provider_name:
@@ -387,6 +416,7 @@ async def invalidate_all_caches_async() -> None:
     """Invalidate all caches in the system asynchronously"""
     await async_user_cache.clear()
     await async_provider_service_cache.clear()
+    await async_oauth_token_cache.clear()
 
     if DEBUG_CACHE:
         logger.debug("Cache: Invalidated all caches")
@@ -429,6 +459,7 @@ async def get_cache_stats_async() -> dict[str, dict[str, Any]]:
     return {
         "user_cache": await async_user_cache.stats(),
         "provider_service_cache": await async_provider_service_cache.stats(),
+        "oauth_token_cache": await async_oauth_token_cache.stats(),
     }
 
 
@@ -437,9 +468,15 @@ async def monitor_cache_performance_async() -> dict[str, Any]:
     stats = await get_cache_stats_async()
 
     # Calculate overall hit rates
-    total_hits = stats["user_cache"]["hits"] + stats["provider_service_cache"]["hits"]
+    total_hits = (
+        stats["user_cache"]["hits"]
+        + stats["provider_service_cache"]["hits"]
+        + stats["oauth_token_cache"]["hits"]
+    )
     total_requests = (
-        stats["user_cache"]["total"] + stats["provider_service_cache"]["total"]
+        stats["user_cache"]["total"]
+        + stats["provider_service_cache"]["total"]
+        + stats["oauth_token_cache"]["total"]
     )
     overall_hit_rate = total_hits / total_requests if total_requests > 0 else 0.0
 

@@ -119,6 +119,8 @@ else:
 # Expose the global cache instances
 user_cache: "Cache" = _CacheBackend(ttl_seconds=300)  # 5-minute TTL for users
 provider_service_cache: "Cache" = _CacheBackend(ttl_seconds=3600)  # 1-hour TTL
+# OAuth2 token caching (55-min TTL with 5-min safety buffer before 1-hour token expiry)
+oauth_token_cache: "Cache" = _CacheBackend(ttl_seconds=3300)  # 55-min TTL
 
 
 def cached(cache_instance: Cache, key_func: Callable[[Any], str] = None):
@@ -238,6 +240,33 @@ def invalidate_provider_service_cache(user_id: int) -> None:
         )
 
 
+# OAuth2 token caching functions
+def get_cached_oauth_token(api_key: str) -> dict[str, Any] | None:
+    """Get a cached OAuth2 token by API key"""
+    if not api_key:
+        return None
+    cached_data = oauth_token_cache.get(f"token:{api_key}")
+    if cached_data:
+        return cached_data
+    return None
+
+
+def cache_oauth_token(api_key: str, token_data: dict[str, Any]) -> None:
+    """Cache an OAuth2 token by API key"""
+    if not api_key or not token_data:
+        return
+    oauth_token_cache.set(f"token:{api_key}", token_data)
+
+
+def invalidate_oauth_token_cache(api_key: str) -> None:
+    """Invalidate OAuth2 token cache for a specific API key"""
+    if not api_key:
+        return
+    oauth_token_cache.delete(f"token:{api_key}")
+    if DEBUG_CACHE:
+        logger.debug(f"Cache: Invalidated OAuth2 token cache for key: {api_key[:8]}...")
+
+
 def invalidate_user_cache_by_id(user_id: int) -> None:
     """Invalidate all cache entries for a specific user ID"""
     if not user_id:
@@ -325,6 +354,7 @@ def invalidate_all_caches() -> None:
     """Invalidate all caches in the system"""
     user_cache.clear()
     provider_service_cache.clear()
+    oauth_token_cache.clear()
 
     if DEBUG_CACHE:
         logger.debug("Cache: Invalidated all caches")
@@ -362,6 +392,7 @@ def get_cache_stats() -> dict[str, dict[str, Any]]:
     return {
         "user_cache": user_cache.stats(),
         "provider_service_cache": provider_service_cache.stats(),
+        "oauth_token_cache": oauth_token_cache.stats(),
     }
 
 
@@ -370,9 +401,15 @@ def monitor_cache_performance() -> dict[str, Any]:
     stats = get_cache_stats()
 
     # Calculate overall hit rates
-    total_hits = stats["user_cache"]["hits"] + stats["provider_service_cache"]["hits"]
+    total_hits = (
+        stats["user_cache"]["hits"]
+        + stats["provider_service_cache"]["hits"]
+        + stats["oauth_token_cache"]["hits"]
+    )
     total_requests = (
-        stats["user_cache"]["total"] + stats["provider_service_cache"]["total"]
+        stats["user_cache"]["total"]
+        + stats["provider_service_cache"]["total"]
+        + stats["oauth_token_cache"]["total"]
     )
     overall_hit_rate = total_hits / total_requests if total_requests > 0 else 0.0
 

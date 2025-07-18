@@ -1,12 +1,14 @@
 import asyncio
 import json
 from collections.abc import AsyncGenerator
+from datetime import datetime, timezone
 from typing import Any
 import aiohttp
 from google.oauth2 import service_account
 from google.auth.transport.requests import Request
 from app.exceptions.exceptions import ProviderAuthenticationException, InvalidProviderConfigException, InvalidProviderAPIKeyException, ProviderAPIException
 
+from app.core.async_cache import get_cached_oauth_token_async, cache_oauth_token_async, invalidate_oauth_token_cache_async
 from app.core.logger import get_logger
 
 from .base import ProviderAdapter
@@ -125,12 +127,38 @@ class VertexAdapter(ProviderAdapter):
         # validate api key
         self.parse_api_key(api_key)
 
+        # check cache first for existing valid token
+        cached_token = await get_cached_oauth_token_async(api_key)
+        if cached_token:
+            token_str = cached_token.get("token")
+            expiry_str = cached_token.get("expiry")
+            if token_str and expiry_str:
+                try:
+                    expiry = datetime.fromisoformat(expiry_str)
+                    # Make expiry timezone-aware if it's naive (Google credentials are UTC)
+                    if expiry.tzinfo is None:
+                        expiry = expiry.replace(tzinfo=timezone.utc)
+                    if expiry > datetime.now(timezone.utc):
+                        return token_str
+                except (ValueError, TypeError):
+                    # Invalid cached token, clear it and continue to refresh
+                    await invalidate_oauth_token_cache_async(api_key)
+
         # load credentials within scope
         try:
             credentials = service_account.Credentials.from_service_account_info(self.cred_json, scopes=["https://www.googleapis.com/auth/cloud-platform"])
 
             # refresh token - run in thread pool to avoid blocking
             await asyncio.to_thread(credentials.refresh, Request())
+            
+            # cache the token with expiry information
+            if credentials.token and credentials.expiry:
+                token_data = {
+                    "token": credentials.token,
+                    "expiry": credentials.expiry.isoformat()
+                }
+                await cache_oauth_token_async(api_key, token_data)
+                
             return credentials.token
         except Exception as e:
             logger.error(f"Error authenticating with Vertex API: {e}")
