@@ -1,17 +1,14 @@
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import (
-    get_current_active_user,
-    get_current_active_user_from_clerk,
-)
-from app.api.schemas.user import MaskedUser, User, UserCreate, UserUpdate
-from app.core.cache import invalidate_user_cache
-from app.core.database import get_db
-from app.core.logger import get_logger
+from app.api.dependencies import get_current_active_user, get_current_active_user_from_clerk
+from app.api.schemas.user import User, UserCreate, UserUpdate, MaskedUser
+from app.core.database import get_async_db
 from app.core.security import get_password_hash
+from app.core.logger import get_logger
 from app.models.user import User as UserModel
 from app.services.provider_service import create_default_tensorblock_provider_for_user
 
@@ -20,53 +17,61 @@ logger = get_logger(name="users")
 router = APIRouter()
 
 
-@router.post("/", response_model=User, status_code=201)
-def create_user(
-    user_in: UserCreate, db: Session = Depends(get_db)
-) -> Any:  # pragma: no cover - (Covered by test_user_creation_and_login)
+@router.post("/", response_model=User)
+async def create_user(
+    user_in: UserCreate, db: AsyncSession = Depends(get_async_db)
+) -> Any:
     """
-    Create new user.
+    Create a new user.
     """
-    db_user = db.query(UserModel).filter(UserModel.email == user_in.email).first()
+    # Check if email already exists
+    result = await db.execute(
+        select(UserModel).filter(UserModel.email == user_in.email)
+    )
+    db_user = result.scalar_one_or_none()
     if db_user:
         raise HTTPException(
-            status_code=400,
-            detail="The user with this email already exists in the system.",
+            status_code=400, detail="Email already registered"
         )
-    db_user = db.query(UserModel).filter(UserModel.username == user_in.username).first()
+    
+    # Check if username already exists
+    result = await db.execute(
+        select(UserModel).filter(UserModel.username == user_in.username)
+    )
+    db_user = result.scalar_one_or_none()
     if db_user:
         raise HTTPException(
-            status_code=400,
-            detail="The user with this username already exists in the system.",
+            status_code=400, detail="Username already registered"
         )
-
+    
+    # Create new user
     hashed_password = get_password_hash(user_in.password)
     db_user = UserModel(
-        username=user_in.username,
         email=user_in.email,
+        username=user_in.username,
         hashed_password=hashed_password,
-        # Removed automatic API key generation on user creation
-        # api_key=generate_forge_api_key(), # Users will create keys via /api-keys endpoint
-        is_active=True,  # Default to active, admin can deactivate
     )
     db.add(db_user)
-    db.commit()
-    db.refresh(db_user)
+    await db.commit()
+    await db.refresh(db_user)
 
     # Create default TensorBlock provider for the new user
     try:
-        create_default_tensorblock_provider_for_user(db_user.id, db)
+        await create_default_tensorblock_provider_for_user(db_user.id, db)
     except Exception as e:
         # Log error but don't fail user creation
-        logger.warning(
-            f"Failed to create default TensorBlock provider for user {db_user.id}: {e}"
-        )
+        logger.error({
+            "message": f"Error creating default TensorBlock provider for user {db_user.id}",
+            "extra": {
+                "error": str(e),
+            }
+        })
 
     return db_user
 
 
 @router.get("/me", response_model=MaskedUser)
-def read_user_me(
+async def read_user_me(
     current_user: UserModel = Depends(get_current_active_user),
 ) -> Any:
     """
@@ -85,7 +90,7 @@ def read_user_me(
 
 
 @router.get("/me/clerk", response_model=MaskedUser)
-def read_user_me_clerk(
+async def read_user_me_clerk(
     current_user: UserModel = Depends(get_current_active_user_from_clerk),
 ) -> Any:
     """
@@ -103,9 +108,9 @@ def read_user_me_clerk(
 
 
 @router.put("/me", response_model=User)
-def update_user_me(
+async def update_user_me(
     user_in: UserUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: UserModel = Depends(get_current_active_user),
 ) -> Any:
     """
@@ -119,8 +124,8 @@ def update_user_me(
         current_user.hashed_password = get_password_hash(user_in.password)
 
     db.add(current_user)
-    db.commit()
-    db.refresh(current_user)
+    await db.commit()
+    await db.refresh(current_user)
     invalidate_user_cache(
         current_user.id
     )  # Assuming user_id is the cache key for user object
@@ -131,15 +136,15 @@ def update_user_me(
 
 
 @router.put("/me/clerk", response_model=User)
-def update_user_me_clerk(
+async def update_user_me_clerk(
     user_in: UserUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: UserModel = Depends(get_current_active_user_from_clerk),
 ) -> Any:
     """
     Update current user from Clerk.
     """
-    return update_user_me(user_in, db, current_user)
+    return await update_user_me(user_in, db, current_user)
 
 
 # The regenerate_api_key and regenerate_api_key_clerk endpoints have been removed.

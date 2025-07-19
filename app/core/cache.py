@@ -1,3 +1,4 @@
+# TODO: deprecate this and move to async cache
 import functools
 import os
 import time
@@ -351,11 +352,6 @@ async def warm_cache(db: Session) -> None:
         for key in forge_api_keys:
             # Cache user with their Forge API key
             cache_user(key.key, user)
-
-    # Cache provider services for active users
-    for user in active_users:
-        service = ProviderService.get_instance(user, db)
-        cache_provider_service(user.id, service)
 
     if DEBUG_CACHE:
         logger.info(f"Cache: Warm-up complete. Cached {len(active_users)} users")

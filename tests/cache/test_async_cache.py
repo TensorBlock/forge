@@ -11,6 +11,8 @@ import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from sqlalchemy import delete
+
 from app.core.async_cache import (
     AsyncCache,
     async_cached,
@@ -188,7 +190,7 @@ async def test_model_list_async_cache():
     ProviderService.cache_models(provider_name, cache_key, mock_models)
 
     # Test retrieving from cache
-    cached_models = ProviderService.get_cached_models(provider_name, cache_key)
+    cached_models = await ProviderService.get_cached_models(provider_name, cache_key)
     assert cached_models is not None, "Async model list cache get failed"
     assert len(cached_models) == EXPECTED_MODEL_COUNT, "Model list length mismatch"
     assert cached_models[FIRST_MODEL_INDEX]["id"] == "gpt-4", "Model ID mismatch"
@@ -197,7 +199,7 @@ async def test_model_list_async_cache():
     # Test cache invalidation
     ProviderService._models_cache = {}
     ProviderService._models_cache_expiry = {}
-    cached_models = ProviderService.get_cached_models(provider_name, cache_key)
+    cached_models = await ProviderService.get_cached_models(provider_name, cache_key)
     assert cached_models is None, "Async model list cache invalidation failed"
 
     print("✅ Async model list cache test passed")
@@ -354,14 +356,14 @@ async def test_async_cache_invalidation():
     model_cache_key = "default"
 
     # Set model list in cache
-    ProviderService.cache_models(provider_name, model_cache_key, mock_models)
-    cached_models = ProviderService.get_cached_models(provider_name, model_cache_key)
+    await ProviderService.cache_models(provider_name, model_cache_key, mock_models)
+    cached_models = await ProviderService.get_cached_models(provider_name, model_cache_key)
     assert cached_models is not None, "Model list cache set failed"
 
     # Invalidate model list cache
     ProviderService._models_cache = {}
     ProviderService._models_cache_expiry = {}
-    cached_models = ProviderService.get_cached_models(provider_name, model_cache_key)
+    cached_models = await ProviderService.get_cached_models(provider_name, model_cache_key)
     assert cached_models is None, "Model list cache invalidation failed"
 
     # Test 4: Provider service instance cache invalidation
@@ -511,55 +513,55 @@ async def test_async_cache_warming():
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+
     from app.models.base import Base
 
     # Use SQLite in-memory database for testing
-    engine = create_engine("sqlite:///:memory:")
+    engine = create_async_engine("sqlite:///:memory:")
 
     # Create all tables
     Base.metadata.create_all(bind=engine)
 
-    testing = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    db = testing()
+    testing = async_sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    async with testing() as db:
+        try:
+            # Create test user and API key
+            user = User(
+                email="test@example.com",
+                username="testuser",
+                is_active=True,
+                hashed_password="dummy_hash",
+            )
+            db.add(user)
+            db.commit()
 
-    try:
-        # Create test user and API key
-        user = User(
-            email="test@example.com",
-            username="testuser",
-            is_active=True,
-            hashed_password="dummy_hash",
-        )
-        db.add(user)
-        db.commit()
+            # Create a test API key
+            test_api_key = "test_key_123"
+            encrypted_key = encrypt_api_key(test_api_key)
 
-        # Create a test API key
-        test_api_key = "test_key_123"
-        encrypted_key = encrypt_api_key(test_api_key)
+            provider_key = ProviderKey(
+                user_id=user.id,
+                provider_name="test_provider",
+                encrypted_api_key=encrypted_key,
+            )
+            db.add(provider_key)
+            db.commit()
 
-        provider_key = ProviderKey(
-            user_id=user.id,
-            provider_name="test_provider",
-            encrypted_api_key=encrypted_key,
-        )
-        db.add(provider_key)
-        db.commit()
+            # Warm the cache
+            await warm_cache_async(db)
 
-        # Warm the cache
-        await warm_cache_async(db)
+            # Verify user is cached with the correct API key
+            cached_user = await get_cached_user_async(test_api_key)
+            assert cached_user is not None
+            assert cached_user.id == user.id
 
-        # Verify user is cached with the correct API key
-        cached_user = await get_cached_user_async(test_api_key)
-        assert cached_user is not None
-        assert cached_user.id == user.id
-
-    finally:
-        # Clean up
-        db.query(ProviderKey).delete()
-        db.query(User).delete()
-        db.commit()
-        db.close()
-        # Drop all tables
-        Base.metadata.drop_all(bind=engine)
+        finally:
+            # Clean up
+            await db.execute(delete(ProviderKey))
+            await db.execute(delete(User))
+            await db.commit()
+            # Drop all tables
+            Base.metadata.drop_all(bind=engine)
 
     return True

@@ -2,7 +2,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logger import get_logger
 from app.models.api_request_log import ApiRequestLog
@@ -15,7 +15,7 @@ class UsageStatsService:
 
     @staticmethod
     async def log_api_request(
-        db: Session,
+        db: AsyncSession,
         user_id: int | None,
         provider_name: str,
         model: str,
@@ -39,19 +39,19 @@ class UsageStatsService:
                 cost=cost,
             )
             db.add(log_entry)
-            db.commit()
+            await db.commit()
             logger.debug(
                 f"Logged API request for user {user_id}: {provider_name}/{model}/{endpoint}"
             )
         except Exception as e:
-            db.rollback()
+            await db.rollback()
             logger.error(
                 f"Failed to log API request for user {user_id}: {e}", exc_info=True
             )
 
     @staticmethod
-    def get_user_stats(
-        db: Session,
+    async def get_user_stats(
+        db: AsyncSession,
         user_id: int,
         provider: str | None = None,
         model: str | None = None,
@@ -89,7 +89,7 @@ class UsageStatsService:
 
         query = query.group_by(ApiRequestLog.provider_name, ApiRequestLog.model)
 
-        results = db.execute(query).fetchall()
+        results = await db.execute(query)
 
         return [
             {
@@ -105,8 +105,8 @@ class UsageStatsService:
         ]
 
     @staticmethod
-    def get_all_stats(
-        db: Session,
+    async def get_all_stats(
+        db: AsyncSession,
         provider: str | None = None,  # Add provider filter
         model: str | None = None,  # Add model filter
         start_date: date | None = None,  # Add start_date filter
@@ -148,7 +148,7 @@ class UsageStatsService:
         query = query.group_by(ApiRequestLog.provider_name, ApiRequestLog.model)
 
         # Execute query
-        results = db.execute(query).fetchall()
+        results = await db.execute(query)
 
         # Convert results to dictionaries
         return [

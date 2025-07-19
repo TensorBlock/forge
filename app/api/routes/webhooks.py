@@ -1,12 +1,14 @@
 import json
 import os
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
-from svix.webhooks import Webhook, WebhookVerificationError
+from sqlalchemy.ext.asyncio import AsyncSession
+from svix import Webhook, WebhookVerificationError
 
-from app.core.database import get_db
+from app.core.database import get_async_db
 from app.core.logger import get_logger
 from app.core.security import generate_forge_api_key
 from app.models.user import User
@@ -21,7 +23,7 @@ CLERK_WEBHOOK_SECRET = os.getenv("CLERK_WEBHOOK_SECRET", "")
 
 
 @router.post("/clerk")
-async def clerk_webhook_handler(request: Request, db: Session = Depends(get_db)):
+async def clerk_webhook_handler(request: Request, db: AsyncSession = Depends(get_async_db)):
     """
     Handle Clerk webhooks for user events.
 
@@ -99,100 +101,13 @@ async def clerk_webhook_handler(request: Request, db: Session = Depends(get_db))
 
         # Handle different event types
         if event_type == "user.created":
-            # Check if user already exists
-            user = db.query(User).filter(User.clerk_user_id == clerk_user_id).first()
-            if user:
-                return {"status": "success", "message": "User already exists"}
-
-            # Check if user exists with this email
-            existing_user = db.query(User).filter(User.email == email).first()
-            if existing_user:
-                # Link existing user to Clerk ID
-                try:
-                    existing_user.clerk_user_id = clerk_user_id
-                    db.commit()
-                    return {"status": "success", "message": "Linked to existing user"}
-                except IntegrityError:
-                    # Another request might have already linked this user or created a new one
-                    db.rollback()
-                    # Retry the query to get the user
-                    user = (
-                        db.query(User)
-                        .filter(User.clerk_user_id == clerk_user_id)
-                        .first()
-                    )
-                    if user:
-                        return {"status": "success", "message": "User already exists"}
-                    # If still no user, continue with creation attempt
-
-            # Create new user
-            forge_api_key = generate_forge_api_key()
-
-            try:
-                user = User(
-                    email=email,
-                    username=username,
-                    clerk_user_id=clerk_user_id,
-                    is_active=True,
-                    forge_api_key=forge_api_key,
-                )
-                db.add(user)
-                db.commit()
-
-                # Create default TensorBlock provider for the new user
-                try:
-                    create_default_tensorblock_provider_for_user(user.id, db)
-                except Exception as e:
-                    # Log error but don't fail user creation
-                    logger.warning(
-                        f"Failed to create default TensorBlock provider for user {user.id}: {e}"
-                    )
-
-                return {"status": "success", "message": "User created"}
-            except IntegrityError as e:
-                # Handle race condition: another request might have created the user
-                db.rollback()
-                if "users_clerk_user_id_key" in str(e) or "clerk_user_id" in str(e):
-                    # Retry the query to get the user that was created by another request
-                    user = (
-                        db.query(User)
-                        .filter(User.clerk_user_id == clerk_user_id)
-                        .first()
-                    )
-                    if user:
-                        return {"status": "success", "message": "User already exists"}
-                    else:
-                        # This shouldn't happen, but handle it gracefully
-                        return {
-                            "status": "error",
-                            "message": "Failed to create user due to database constraint",
-                        }
-                else:
-                    # Re-raise other integrity errors
-                    raise
+            await handle_user_created(event_data, db)
 
         elif event_type == "user.updated":
-            # Update user if they exist
-            user = db.query(User).filter(User.clerk_user_id == clerk_user_id).first()
-            if not user:
-                return {"status": "error", "message": "User not found"}
-
-            # Update fields
-            if email and user.email != email:
-                user.email = email
-            if username and user.username != username:
-                user.username = username
-
-            db.commit()
-            return {"status": "success", "message": "User updated"}
+            await handle_user_updated(event_data, db)
 
         elif event_type == "user.deleted":
-            # Deactivate user rather than delete
-            user = db.query(User).filter(User.clerk_user_id == clerk_user_id).first()
-            if user:
-                user.is_active = False
-                db.commit()
-                return {"status": "success", "message": "User deactivated"}
+            await handle_user_deleted(event_data, db)
 
         return {"status": "success", "message": f"Event {event_type} processed"}
 
@@ -205,3 +120,121 @@ async def clerk_webhook_handler(request: Request, db: Session = Depends(get_db))
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error processing webhook: {str(e)}",
         )
+
+
+async def handle_user_created(event_data: dict, db: AsyncSession):
+    """Handle user.created event from Clerk"""
+    try:
+        clerk_user_id = event_data.get("id")
+        email = event_data.get("email_addresses", [{}])[0].get("email_address", "")
+        username = (
+            event_data.get("username")
+            or event_data.get("first_name", "")
+            or email.split("@")[0]
+        )
+
+        logger.info(f"Creating user from Clerk webhook: {username} ({email})")
+
+        # Check if user already exists by clerk_user_id
+        result = await db.execute(
+            select(User).filter(User.clerk_user_id == clerk_user_id)
+        )
+        user = result.scalar_one_or_none()
+        if user:
+            logger.info(f"User {username} already exists with Clerk ID")
+            return
+
+        # Check if user exists with this email
+        result = await db.execute(
+            select(User).filter(User.email == email)
+        )
+        existing_user = result.scalar_one_or_none()
+        if existing_user:
+            # Link existing user to Clerk ID
+            existing_user.clerk_user_id = clerk_user_id
+            await db.commit()
+            logger.info(f"Linked existing user {existing_user.username} to Clerk ID")
+            return
+
+        # Create new user
+        user = User(
+            username=username,
+            email=email,
+            clerk_user_id=clerk_user_id,
+            is_active=True,
+            hashed_password="",  # Clerk handles authentication
+        )
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+
+        # Create default provider for the user
+        create_default_tensorblock_provider_for_user(user.id, db)
+
+        logger.info(f"Successfully created user {username} with ID {user.id}")
+
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Failed to create user from webhook: {e}", exc_info=True)
+        raise
+
+
+async def handle_user_updated(event_data: dict, db: AsyncSession):
+    """Handle user.updated event from Clerk"""
+    try:
+        clerk_user_id = event_data.get("id")
+        email = event_data.get("email_addresses", [{}])[0].get("email_address", "")
+        username = (
+            event_data.get("username")
+            or event_data.get("first_name", "")
+            or email.split("@")[0]
+        )
+
+        logger.info(f"Updating user from Clerk webhook: {username} ({email})")
+
+        result = await db.execute(
+            select(User).filter(User.clerk_user_id == clerk_user_id)
+        )
+        user = result.scalar_one_or_none()
+        if not user:
+            logger.warning(f"User with Clerk ID {clerk_user_id} not found for update")
+            return
+
+        # Update user information
+        user.username = username
+        user.email = email
+        await db.commit()
+
+        logger.info(f"Successfully updated user {username}")
+
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Failed to update user from webhook: {e}", exc_info=True)
+        raise
+
+
+async def handle_user_deleted(event_data: dict, db: AsyncSession):
+    """Handle user.deleted event from Clerk"""
+    try:
+        clerk_user_id = event_data.get("id")
+
+        logger.info(f"Deleting user from Clerk webhook: {clerk_user_id}")
+
+        result = await db.execute(
+            select(User).filter(User.clerk_user_id == clerk_user_id)
+        )
+        user = result.scalar_one_or_none()
+        if not user:
+            logger.warning(f"User with Clerk ID {clerk_user_id} not found for deletion")
+            return
+
+        # Deactivate user instead of deleting to preserve data integrity
+        user.is_active = False
+        await db.commit()
+
+        logger.info(f"Successfully deactivated user {user.username}")
+
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Failed to delete user from webhook: {e}", exc_info=True)
+        raise

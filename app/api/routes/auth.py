@@ -3,11 +3,12 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.routes.users import create_user as create_user_endpoint_logic
 from app.api.schemas.user import Token, User, UserCreate
-from app.core.database import get_db
+from app.core.database import get_async_db
 from app.core.logger import get_logger
 from app.core.security import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
@@ -22,9 +23,9 @@ router = APIRouter()
 
 
 @router.post("/register", response_model=User)
-def register(
+async def register(
     user_in: UserCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ) -> Any:
     """
     Register new user. This will create the user but will not automatically create a Forge API key.
@@ -33,7 +34,7 @@ def register(
     # Call the user creation logic from users.py
     # This handles checks for existing email/username and password hashing.
     try:
-        db_user = create_user_endpoint_logic(user_in=user_in, db=db)
+        db_user = await create_user_endpoint_logic(user_in=user_in, db=db)
     except HTTPException as e:  # Propagate HTTPExceptions (like 400 for existing user)
         raise e
     except Exception as e:  # Catch any other unexpected errors during user creation
@@ -73,13 +74,18 @@ def register(
 
 
 @router.post("/token", response_model=Token)
-def login_for_access_token(
-    db: Session = Depends(get_db), form_data: OAuth2PasswordRequestForm = Depends()
+async def login_for_access_token(
+    db: AsyncSession = Depends(get_async_db), 
+    form_data: OAuth2PasswordRequestForm = Depends()
 ) -> Any:
     """
     Get an access token for future API requests.
     """
-    user = db.query(UserModel).filter(UserModel.username == form_data.username).first()
+    result = await db.execute(
+        select(UserModel).filter(UserModel.username == form_data.username)
+    )
+    user = result.scalar_one_or_none()
+    
     if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

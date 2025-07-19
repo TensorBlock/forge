@@ -4,11 +4,12 @@ Utility script to fix model mappings in the database.
 Specifically for fixing the gpt-4o to mock-gpt-4o mapping issue.
 """
 
+import asyncio
 import os
 import sys
 from pathlib import Path
 
-from app.core.database import get_db
+from app.core.database import get_async_db
 
 # Add the project root to the Python path
 script_dir = Path(__file__).resolve().parent.parent.parent
@@ -18,13 +19,14 @@ sys.path.insert(0, str(script_dir))
 os.chdir(script_dir)
 
 
-def fix_model_mappings():
+async def fix_model_mappings():
     """Fix model mappings by clearing caches"""
     print("\n🔧 FIXING MODEL MAPPINGS")
     print("======================")
 
     # Get DB session
-    next(get_db())
+    async with get_async_db() as db:
+        pass
 
     # Clear all caches to ensure changes take effect
     print("🔄 Invalidating provider service cache for all users")
@@ -38,9 +40,9 @@ def fix_model_mappings():
     return True
 
 
-def main():
+async def main():
     """Main entry point"""
-    if fix_model_mappings():
+    if await fix_model_mappings():
         print(
             "\n✅ Model mappings have been fixed. Use check_model_mappings.py to verify."
         )
@@ -51,4 +53,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
