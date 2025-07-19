@@ -21,6 +21,7 @@ This guide provides detailed instructions for using Forge, the AI provider middl
   - [API Integration](#api-integration)
     - [OpenAI API Compatibility](#openai-api-compatibility)
     - [Chat Completions](#chat-completions)
+    - [Usage Statistics](#usage-statistics)
     - [Model Support](#model-support)
   - [Advanced Features](#advanced-features)
     - [Custom Model Mapping](#custom-model-mapping)
@@ -210,6 +211,89 @@ curl -X POST http://localhost:8000/chat/completions \
 ```
 
 For detailed API documentation, visit the Swagger UI at `http://localhost:8000/docs` when the server is running.
+
+### Usage Statistics
+
+To monitor your API usage and track consumption across different providers and models:
+
+```bash
+curl -X GET "http://localhost:8000/v1/stats/" \
+  -H "Authorization: Bearer your_forge_api_key"
+```
+
+#### Query Parameters
+
+You can filter usage statistics using the following parameters:
+
+- `provider`: Filter by provider name (e.g., "OpenAI", "Azure", "Anthropic")
+- `model`: Filter by model name (e.g., "gpt-4.1", "claude-3")
+- `start_date`: Start date for filtering (YYYY-MM-DD format)
+- `end_date`: End date for filtering (YYYY-MM-DD format)
+
+#### Example Queries
+
+**Get usage for a specific provider:**
+
+```bash
+curl -X GET "http://localhost:8000/v1/stats/?provider=OpenAI" \
+  -H "Authorization: Bearer your_forge_api_key"
+```
+
+**Get usage for a specific model:**
+
+```bash
+curl -X GET "http://localhost:8000/v1/stats/?model=gpt-4.1" \
+  -H "Authorization: Bearer your_forge_api_key"
+```
+
+**Get usage for a date range:**
+
+```bash
+curl -X GET "http://localhost:8000/v1/stats/?start_date=2024-01-01&end_date=2024-01-31" \
+  -H "Authorization: Bearer your_forge_api_key"
+```
+
+**Combine multiple filters:**
+
+```bash
+curl -X GET "http://localhost:8000/v1/stats/?provider=OpenAI&model=gpt-4.1&start_date=2024-01-01" \
+  -H "Authorization: Bearer your_forge_api_key"
+```
+
+#### Response Format
+
+The API returns a JSON array with usage statistics:
+
+```json
+  {
+    "provider_name": "OpenAI",
+    "model": "gpt-4",
+    "input_tokens": 10000,
+    "output_tokens": 5000,
+    "total_tokens": 15000,
+    "requests_count": 15,
+    "cost": 0.0
+  }
+```
+
+````
+
+**Response Fields:**
+
+- `provider_name`: The AI provider name
+- `model`: The specific model used
+- `input_tokens`: Number of input tokens consumed
+- `output_tokens`: Number of output tokens generated
+- `total_tokens`: Total tokens (input + output)
+- `requests_count`: Number of API requests made
+- `cost`: Estimated cost (if available)
+
+This is useful for:
+
+- Monitoring API usage and costs
+- Tracking consumption across different providers
+- Analyzing usage patterns by model or time period
+- Budget planning and resource allocation
 
 ### Model Support
 
