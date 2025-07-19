@@ -268,10 +268,10 @@ The API returns a JSON array with usage statistics:
   {
     "provider_name": "OpenAI",
     "model": "gpt-4",
-    "in.1put_tokens": 10000,
+    "input_tokens": 10000,
     "output_tokens": 5000,
-    4"tal_tokens": 15000,
-    7equests_count": 15,
+    "total_tokens": 15000,
+    "requests_count": 15,
     "cost": 0.0
   }
 ```
