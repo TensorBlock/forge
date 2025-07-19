@@ -139,22 +139,6 @@ class ProviderService:
             ProviderService._adapters_cache = ProviderAdapterFactory.get_all_adapters()
         return ProviderService._adapters_cache
 
-    def _parse_model_mapping(self, mapping_str: str | None) -> dict:
-        if not mapping_str:
-            return {}
-        try:
-            return json.loads(mapping_str)
-        except json.JSONDecodeError:
-            logger.warning(f"Failed to parse model_mapping JSON: {mapping_str}")
-            # Try a literal eval as fallback
-            try:
-                import ast
-
-                return ast.literal_eval(mapping_str)
-            except (SyntaxError, ValueError):
-                logger.warning(f"Could not parse model_mapping: {mapping_str}")
-        return {}
-
     async def _load_provider_keys(self) -> dict[str, dict[str, Any]]:
         """Load all provider keys for the user synchronously, with lazy loading and caching."""
         if self._keys_loaded:
@@ -185,7 +169,7 @@ class ProviderService:
 
         keys = {}
         for provider_key in provider_key_records:
-            model_mapping = self._parse_model_mapping(provider_key.model_mapping)
+            model_mapping = provider_key.model_mapping
 
             keys[provider_key.provider_name] = {
                 "api_key": decrypt_api_key(provider_key.encrypted_api_key),
@@ -237,7 +221,7 @@ class ProviderService:
 
         keys = {}
         for provider_key in provider_key_records:
-            model_mapping = self._parse_model_mapping(provider_key.model_mapping)
+            model_mapping = provider_key.model_mapping
 
             keys[provider_key.provider_name] = {
                 "api_key": decrypt_api_key(provider_key.encrypted_api_key),

@@ -8,7 +8,11 @@ from app.api.dependencies import get_current_active_user, get_current_active_use
 from app.api.schemas.user import User, UserCreate, UserUpdate, MaskedUser
 from app.core.database import get_async_db
 from app.core.security import get_password_hash
+from app.core.logger import get_logger
 from app.models.user import User as UserModel
+from app.services.provider_service import create_default_tensorblock_provider_for_user
+
+logger = get_logger(name="users")
 
 router = APIRouter()
 
@@ -50,6 +54,19 @@ async def create_user(
     db.add(db_user)
     await db.commit()
     await db.refresh(db_user)
+
+    # Create default TensorBlock provider for the new user
+    try:
+        await create_default_tensorblock_provider_for_user(db_user.id, db)
+    except Exception as e:
+        # Log error but don't fail user creation
+        logger.error({
+            "message": f"Error creating default TensorBlock provider for user {db_user.id}",
+            "extra": {
+                "error": str(e),
+            }
+        })
+
     return db_user
 
 

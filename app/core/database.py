@@ -7,6 +7,11 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 
 load_dotenv()
 
+POOL_SIZE = 5
+MAX_OVERFLOW = 10
+MAX_TIMEOUT = 30
+POOL_RECYCLE = 1800
+
 SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL")
 if not SQLALCHEMY_DATABASE_URL:
     raise ValueError("DATABASE_URL environment variable is not set")
@@ -14,10 +19,11 @@ if not SQLALCHEMY_DATABASE_URL:
 # Sync engine and session
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
-    pool_size=5,
-    max_overflow=10,
-    pool_timeout=30,
-    pool_recycle=1800,
+    pool_size=POOL_SIZE,
+    max_overflow=MAX_OVERFLOW,
+    pool_timeout=MAX_TIMEOUT,
+    pool_recycle=POOL_RECYCLE,
+    echo=False,
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -41,11 +47,11 @@ elif SQLALCHEMY_DATABASE_URL.startswith("postgresql+psycopg2://"):
 
 async_engine = create_async_engine(
     ASYNC_DATABASE_URL,
-    pool_size=5,
-    max_overflow=10,
-    pool_timeout=30,
-    pool_recycle=1800,
-    echo=False,  # Set to True for debugging SQL queries
+    pool_size=POOL_SIZE,
+    max_overflow=MAX_OVERFLOW,
+    pool_timeout=MAX_TIMEOUT,
+    pool_recycle=POOL_RECYCLE,
+    echo=False,
 )
 
 AsyncSessionLocal = async_sessionmaker(

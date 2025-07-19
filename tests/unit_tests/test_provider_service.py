@@ -38,63 +38,55 @@ class TestProviderService(TestCase):
         self.provider_key_openai.provider_name = "openai"
         self.provider_key_openai.encrypted_api_key = "encrypted_openai_key"
         self.provider_key_openai.base_url = None
-        self.provider_key_openai.model_mapping = json.dumps({"custom-gpt": "gpt-4"})
+        self.provider_key_openai.model_mapping = {"custom-gpt": "gpt-4"}
 
         self.provider_key_anthropic = MagicMock(spec=ProviderKey)
         self.provider_key_anthropic.provider_name = "anthropic"
         self.provider_key_anthropic.encrypted_api_key = "encrypted_anthropic_key"
         self.provider_key_anthropic.base_url = None
-        self.provider_key_anthropic.model_mapping = "{}"
+        self.provider_key_anthropic.model_mapping = {}
 
         self.provider_key_google = MagicMock(spec=ProviderKey)
         self.provider_key_google.provider_name = "gemini"
         self.provider_key_google.encrypted_api_key = "encrypted_gemini_key"
         self.provider_key_google.base_url = None
-        self.provider_key_google.model_mapping = json.dumps(
-            {"test-gemini": "models/gemini-2.0-flash"}
-        )
+        self.provider_key_google.model_mapping = {"test-gemini": "models/gemini-2.0-flash"}
 
         self.provider_key_xai = MagicMock(spec=ProviderKey)
         self.provider_key_xai.provider_name = "xai"
         self.provider_key_xai.encrypted_api_key = "encrypted_xai_key"
         self.provider_key_xai.base_url = None
-        self.provider_key_xai.model_mapping = json.dumps({"test-xai": "grok-2-1212"})
+        self.provider_key_xai.model_mapping = {"test-xai": "grok-2-1212"}
 
         self.provider_key_fireworks = MagicMock(spec=ProviderKey)
         self.provider_key_fireworks.provider_name = "fireworks"
         self.provider_key_fireworks.encrypted_api_key = "encrypted_fireworks_key"
         self.provider_key_fireworks.base_url = None
-        self.provider_key_fireworks.model_mapping = json.dumps(
-            {"test-fireworks": "accounts/fireworks/models/code-llama-7b"}
-        )
+        self.provider_key_fireworks.model_mapping = {"test-fireworks": "accounts/fireworks/models/code-llama-7b"}
 
         self.provider_key_openrouter = MagicMock(spec=ProviderKey)
         self.provider_key_openrouter.provider_name = "openrouter"
         self.provider_key_openrouter.encrypted_api_key = "encrypted_openrouter_key"
         self.provider_key_openrouter.base_url = None
-        self.provider_key_openrouter.model_mapping = json.dumps(
-            {"test-openrouter": "gpt-4o"}
-        )
+        self.provider_key_openrouter.model_mapping = {"test-openrouter": "gpt-4o"}
 
         self.provider_key_together = MagicMock(spec=ProviderKey)
         self.provider_key_together.provider_name = "together"
         self.provider_key_together.encrypted_api_key = "encrypted_together_key"
         self.provider_key_together.base_url = None
-        self.provider_key_together.model_mapping = json.dumps(
-            {"test-together": "UAE-Large-V1"}
-        )
+        self.provider_key_together.model_mapping = {"test-together": "UAE-Large-V1"}
 
         self.provider_key_azure = MagicMock(spec=ProviderKey)
         self.provider_key_azure.provider_name = "azure"
         self.provider_key_azure.encrypted_api_key = "encrypted_azure_key"
         self.provider_key_azure.base_url = "https://test-azure.openai.com"
-        self.provider_key_azure.model_mapping = json.dumps({"test-azure": "gpt-4o"})
+        self.provider_key_azure.model_mapping = {"test-azure": "gpt-4o"}
 
         self.provider_key_bedrock = MagicMock(spec=ProviderKey)
         self.provider_key_bedrock.provider_name = "bedrock"
         self.provider_key_bedrock.encrypted_api_key = "encrypted_bedrock_key"
         self.provider_key_bedrock.base_url = None
-        self.provider_key_bedrock.model_mapping = json.dumps({"test-bedrock": "claude-3-5-sonnet-20240620-v1:0"})
+        self.provider_key_bedrock.model_mapping = {"test-bedrock": "claude-3-5-sonnet-20240620-v1:0"}
 
         self.user.provider_keys = [
             self.provider_key_openai,

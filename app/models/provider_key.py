@@ -1,4 +1,4 @@
-from sqlalchemy import Column, ForeignKey, Integer, String
+from sqlalchemy import Column, ForeignKey, Integer, String, JSON
 from sqlalchemy.orm import relationship
 
 from app.models.forge_api_key import forge_api_key_provider_scope_association
@@ -18,7 +18,7 @@ class ProviderKey(BaseModel):
     base_url = Column(
         String, nullable=True
     )  # Allow custom base URLs for some providers
-    model_mapping = Column(String, nullable=True)  # JSON string for model name mappings
+    model_mapping = Column(JSON, nullable=True)  # JSON dict for model name mappings
 
     # Relationship to ForgeApiKeys that have this provider key in their scope
     scoped_forge_api_keys = relationship(

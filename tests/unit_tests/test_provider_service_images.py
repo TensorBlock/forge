@@ -36,15 +36,13 @@ class TestProviderServiceImages(TestCase):
         self.provider_key_openai.provider_name = "openai"
         self.provider_key_openai.encrypted_api_key = "encrypted_openai_key"
         self.provider_key_openai.base_url = None
-        self.provider_key_openai.model_mapping = json.dumps({"dall-e-2": "dall-e-2"})
+        self.provider_key_openai.model_mapping = {"dall-e-2": "dall-e-2"}
 
         self.provider_key_anthropic = MagicMock(spec=ProviderKey)
         self.provider_key_anthropic.provider_name = "anthropic"
         self.provider_key_anthropic.encrypted_api_key = "encrypted_anthropic_key"
         self.provider_key_anthropic.base_url = None
-        self.provider_key_anthropic.model_mapping = json.dumps(
-            {"custom-anthropic": "claude-3-opus", "claude-3-opus": "claude-3-opus"}
-        )
+        self.provider_key_anthropic.model_mapping = {"custom-anthropic": "claude-3-opus", "claude-3-opus": "claude-3-opus"}
 
         self.user.provider_keys = [
             self.provider_key_openai,
