@@ -169,7 +169,7 @@ class ProviderService:
 
         keys = {}
         for provider_key in provider_key_records:
-            model_mapping = provider_key.model_mapping
+            model_mapping = provider_key.model_mapping or {}
 
             keys[provider_key.provider_name] = {
                 "api_key": decrypt_api_key(provider_key.encrypted_api_key),
@@ -221,7 +221,7 @@ class ProviderService:
 
         keys = {}
         for provider_key in provider_key_records:
-            model_mapping = provider_key.model_mapping
+            model_mapping = provider_key.model_mapping or {}
 
             keys[provider_key.provider_name] = {
                 "api_key": decrypt_api_key(provider_key.encrypted_api_key),
@@ -538,9 +538,9 @@ class ProviderService:
             # Record the usage statistics using the new logging method
             # Use a fresh DB session for logging, since the original request session
             # may have been closed by FastAPI after the response was returned.
-            from app.core.database import AsyncSessionLocal
+            from app.core.database import get_db_session
 
-            async with AsyncSessionLocal() as new_db_session:
+            async with get_db_session() as new_db_session:
                 await UsageStatsService.log_api_request(
                     db=new_db_session,
                     user_id=self.user_id,
@@ -645,9 +645,9 @@ class ProviderService:
 
                     # Use a fresh DB session for logging, since the original request session
                     # may have been closed by FastAPI after the response was returned.
-                    from app.core.database import AsyncSessionLocal
+                    from app.core.database import get_db_session
 
-                    async with AsyncSessionLocal() as new_db_session:
+                    async with get_db_session() as new_db_session:
                         await UsageStatsService.log_api_request(
                             db=new_db_session,
                             user_id=self.user_id,

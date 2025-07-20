@@ -14,7 +14,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from app.core.cache import provider_service_cache
-from app.core.database import AsyncSessionLocal
+from app.core.database import get_db_session
 from app.core.security import encrypt_api_key
 from app.models.provider_key import ProviderKey
 from app.models.user import User
@@ -34,7 +34,7 @@ os.chdir(script_dir)
 async def setup_mock_provider(username: str, force: bool = False):
     """Add a mock provider key to the specified user account"""
     # Create a database session
-    async with AsyncSessionLocal() as db:
+    async with get_db_session() as db:
         try:
             # Find the user
             result = await db.execute(select(User).filter(User.username == username))

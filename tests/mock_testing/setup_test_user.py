@@ -15,7 +15,7 @@ from passlib.context import CryptContext
 from sqlalchemy import select
 
 from app.core.cache import invalidate_user_cache, provider_service_cache
-from app.core.database import AsyncSessionLocal
+from app.core.database import get_db_session
 from app.core.security import encrypt_api_key
 from app.models.provider_key import ProviderKey
 from app.models.user import User
@@ -41,7 +41,7 @@ MOCK_PROVIDER_API_KEY = "mock-api-key-for-testing-purposes"
 
 async def create_or_update_test_user():
     """Create a test user with a known Forge API key or update existing user"""
-    async with AsyncSessionLocal() as db:
+    async with get_db_session() as db:
         try:
             # Try to find user by username first
             result = await db.execute(select(User).filter(User.username == TEST_USERNAME))
@@ -92,7 +92,7 @@ async def create_or_update_test_user():
 
 async def add_mock_provider_to_user(user_id):
     """Add a mock provider to the test user"""
-    async with AsyncSessionLocal() as db:
+    async with get_db_session() as db:
         try:
             # Check if the mock provider already exists for this user
             result = await db.execute(select(ProviderKey).filter(ProviderKey.user_id == user_id, ProviderKey.provider_name == "mock"))
@@ -150,12 +150,12 @@ async def main():
     print("🔄 Setting up test user with mock provider...")
 
     # Create or update test user
-    user = create_or_update_test_user()
+    user = await create_or_update_test_user()
     if not user:
         sys.exit(1)
 
     # Add mock provider to user
-    if add_mock_provider_to_user(user.id):
+    if await add_mock_provider_to_user(user.id):
         print("")
         print("✅ Setup complete!")
         print("📝 To test the mock provider, run:")

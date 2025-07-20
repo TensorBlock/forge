@@ -1,6 +1,7 @@
 import os
 
 from dotenv import load_dotenv
+from contextlib import asynccontextmanager
 from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -65,10 +66,22 @@ Base = declarative_base()
 
 
 # Async dependency
-# TODO: Add async dependency to the API routes
 async def get_async_db():
     async with AsyncSessionLocal() as session:
         try:
             yield session
+        finally:
+            await session.close()
+
+
+@asynccontextmanager
+async def get_db_session():
+    """Async context manager for database sessions"""
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
         finally:
             await session.close()
