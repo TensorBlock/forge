@@ -6,21 +6,21 @@ from urllib.parse import quote
 import requests
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from jose import jwt
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import (
     get_current_active_user,
     get_current_active_user_from_clerk,
 )
 from app.api.schemas.user import User
-from app.core.database import get_db
+from app.core.database import get_async_db
 from app.models.user import User as UserModel
 
 router = APIRouter()
 
 
 async def get_user_from_any_auth(
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     jwt_user: UserModel | None = Depends(get_current_active_user),
     clerk_user: UserModel | None = Depends(get_current_active_user_from_clerk),
 ) -> UserModel:
@@ -45,7 +45,7 @@ async def get_user_from_any_auth(
 
 
 @router.get("/me", response_model=User)
-def get_unified_current_user(
+async def get_unified_current_user(
     current_user: UserModel = Depends(get_user_from_any_auth),
 ) -> Any:
     """

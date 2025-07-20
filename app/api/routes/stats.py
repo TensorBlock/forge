@@ -2,12 +2,12 @@ from datetime import date
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import (
     get_current_active_user_from_clerk,
     get_current_user,
-    get_db,
+    get_async_db,
     get_user_by_api_key,
 )
 from app.models.user import User
@@ -29,7 +29,7 @@ async def get_user_stats(
     end_date: date | None = Query(
         None, description="End date for filtering (YYYY-MM-DD)"
     ),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """
     Get aggregated usage statistics for the current user, queried from request logs.
@@ -38,7 +38,7 @@ async def get_user_stats(
     """
     # Note: Service layer now handles aggregation and filtering
     # We pass the query parameters directly to the service method
-    stats = UsageStatsService.get_user_stats(
+    stats = await UsageStatsService.get_user_stats(
         db=db,
         user_id=current_user.id,
         provider=provider,
@@ -62,7 +62,7 @@ async def get_user_stats_clerk(
     end_date: date | None = Query(
         None, description="End date for filtering (YYYY-MM-DD)"
     ),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """
     Get aggregated usage statistics for the current user, queried from request logs.
@@ -71,7 +71,7 @@ async def get_user_stats_clerk(
     """
     # Note: Service layer now handles aggregation and filtering
     # We pass the query parameters directly to the service method
-    stats = UsageStatsService.get_user_stats(
+    stats = await UsageStatsService.get_user_stats(
         db=db,
         user_id=current_user.id,
         provider=provider,
@@ -93,7 +93,7 @@ async def get_all_stats(
     end_date: date | None = Query(
         None, description="End date for filtering (YYYY-MM-DD)"
     ),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """
     Get aggregated usage statistics for all users, queried from request logs.
@@ -106,7 +106,7 @@ async def get_all_stats(
             status_code=403, detail="Not authorized to access admin statistics"
         )
 
-    stats = UsageStatsService.get_all_stats(
+    stats = await UsageStatsService.get_all_stats(
         db=db, provider=provider, model=model, start_date=start_date, end_date=end_date
     )
     return stats
