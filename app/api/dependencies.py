@@ -109,7 +109,11 @@ async def get_current_user(
     except JWTError as err:
         raise credentials_exception from err
     
-    result = await db.execute(select(User).filter(User.username == token_data.username))
+    result = await db.execute(
+        select(User)
+        .options(selectinload(User.api_keys))  # Eager load Forge API keys
+        .filter(User.username == token_data.username)
+    )
     user = result.scalar_one_or_none()
     if user is None:
         raise credentials_exception
@@ -356,7 +360,11 @@ async def get_current_user_from_clerk(
         )
 
     # Find user by clerk_user_id
-    result = await db.execute(select(User).filter(User.clerk_user_id == clerk_user_id))
+    result = await db.execute(
+        select(User)
+        .options(selectinload(User.api_keys))  # Eager load Forge API keys
+        .filter(User.clerk_user_id == clerk_user_id)
+    )
     user = result.scalar_one_or_none()
 
     # User doesn't exist yet, create one
