@@ -6,16 +6,13 @@ import time
 from collections.abc import AsyncGenerator
 from typing import Any, ClassVar
 
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-# For async support
-from app.core.cache import (
-    DEBUG_CACHE,
-    provider_service_cache,
-)
+from app.core.async_cache import async_provider_service_cache, DEBUG_CACHE
 from app.core.logger import get_logger
 from app.core.security import decrypt_api_key, encrypt_api_key
-from app.exceptions.exceptions import InvalidProviderException
+from app.exceptions.exceptions import InvalidProviderException, BaseInvalidRequestException, InvalidForgeKeyException
 from app.models.user import User
 from app.services.usage_stats_service import UsageStatsService
 
@@ -53,7 +50,7 @@ class ProviderService:
 
     # ------------------------------------------------------------------
     # Helper for building a cache key that works across all workers.
-    # Stored via app.core.cache.provider_service_cache which resolves to
+    # Stored via app.core.async_cache.async_provider_service_cache which resolves to
     # either RedisCache or in-memory Cache.
     # ------------------------------------------------------------------
 
@@ -62,7 +59,7 @@ class ProviderService:
         # Using a stable namespace makes invalidation easier
         return f"models:{provider_name}:{cache_key}"
 
-    def __init__(self, user_id: int, db: Session):
+    def __init__(self, user_id: int, db: AsyncSession):
         self.user_id = user_id
         self.db = db
         self.provider_keys: dict[str, dict[str, Any]] = {}
@@ -71,28 +68,7 @@ class ProviderService:
         self._keys_loaded = False
 
     @classmethod
-    def get_instance(cls, user: User, db: Session) -> "ProviderService":
-        """Get a cached instance of ProviderService for a user or create a new one"""
-        cache_key = f"provider_service:{user.id}"
-        cached_instance = provider_service_cache.get(cache_key)
-        if cached_instance:
-            if DEBUG_CACHE:
-                logger.debug(
-                    f"Using cached ProviderService instance for user {user.id}"
-                )
-            # Update the db session reference for the cached instance
-            cached_instance.db = db
-            return cached_instance
-
-        # No cached instance found, create a new one
-        if DEBUG_CACHE:
-            logger.debug(f"Creating new ProviderService instance for user {user.id}")
-        instance = cls(user.id, db)
-        provider_service_cache.set(cache_key, instance)
-        return instance
-
-    @classmethod
-    async def async_get_instance(cls, user: User, db: Session) -> "ProviderService":
+    async def async_get_instance(cls, user: User, db: AsyncSession) -> "ProviderService":
         """Get a cached instance of ProviderService for a user or create a new one (async version)"""
         from app.core.async_cache import async_provider_service_cache
 
@@ -117,7 +93,7 @@ class ProviderService:
         return instance
 
     @classmethod
-    def get_cached_models(
+    async def get_cached_models(
         cls, provider_name: str, cache_key: str
     ) -> list[dict[str, Any]] | None:
         """Return cached model list if present (shared cache)."""
@@ -131,7 +107,7 @@ class ProviderService:
             return l1_entry[1]
 
         # -------- L2: shared cache (Redis / memory) --------
-        models = provider_service_cache.get(key)
+        models = await async_provider_service_cache.get(key)
         if models:
             # populate L1
             cls._models_l1_cache[key] = (time.time() + cls._models_cache_ttl, models)
@@ -140,14 +116,14 @@ class ProviderService:
         return models
 
     @classmethod
-    def cache_models(
+    async def cache_models(
         cls, provider_name: str, cache_key: str, models: list[dict[str, Any]]
     ) -> None:
         """Store models in the shared cache with a TTL."""
         key = cls._model_cache_key(provider_name, cache_key)
 
         # Write to shared cache (L2)
-        provider_service_cache.set(key, models, ttl=cls._models_cache_ttl)
+        await async_provider_service_cache.set(key, models, ttl=cls._models_cache_ttl)
 
         # Populate/refresh L1
         cls._models_l1_cache[key] = (time.time() + cls._models_cache_ttl, models)
@@ -163,30 +139,14 @@ class ProviderService:
             ProviderService._adapters_cache = ProviderAdapterFactory.get_all_adapters()
         return ProviderService._adapters_cache
 
-    def _parse_model_mapping(self, mapping_str: str | None) -> dict:
-        if not mapping_str:
-            return {}
-        try:
-            return json.loads(mapping_str)
-        except json.JSONDecodeError:
-            logger.warning(f"Failed to parse model_mapping JSON: {mapping_str}")
-            # Try a literal eval as fallback
-            try:
-                import ast
-
-                return ast.literal_eval(mapping_str)
-            except (SyntaxError, ValueError):
-                logger.warning(f"Could not parse model_mapping: {mapping_str}")
-        return {}
-
-    def _load_provider_keys(self) -> dict[str, dict[str, Any]]:
+    async def _load_provider_keys(self) -> dict[str, dict[str, Any]]:
         """Load all provider keys for the user synchronously, with lazy loading and caching."""
         if self._keys_loaded:
             return self.provider_keys
 
         # Try to get provider keys from cache
         cache_key = f"provider_keys:{self.user_id}"
-        cached_keys = provider_service_cache.get(cache_key)
+        cached_keys = await async_provider_service_cache.get(cache_key)
         if cached_keys is not None:
             if DEBUG_CACHE:
                 logger.debug(
@@ -204,13 +164,12 @@ class ProviderService:
         # Query ProviderKey directly by user_id
         from app.models.provider_key import ProviderKey
 
-        provider_key_records = (
-            self.db.query(ProviderKey).filter(ProviderKey.user_id == self.user_id).all()
-        )
+        result = await self.db.execute(select(ProviderKey).filter(ProviderKey.user_id == self.user_id))
+        provider_key_records  = result.scalars().all()
 
         keys = {}
         for provider_key in provider_key_records:
-            model_mapping = self._parse_model_mapping(provider_key.model_mapping)
+            model_mapping = provider_key.model_mapping or {}
 
             keys[provider_key.provider_name] = {
                 "api_key": decrypt_api_key(provider_key.encrypted_api_key),
@@ -226,7 +185,7 @@ class ProviderService:
             logger.debug(
                 f"Caching provider keys for user {self.user_id} (TTL: 3600s) (sync)"
             )
-        provider_service_cache.set(cache_key, keys, ttl=3600)  # Cache for 1 hour
+        await async_provider_service_cache.set(cache_key, keys, ttl=3600)  # Cache for 1 hour
 
         return keys
 
@@ -257,13 +216,12 @@ class ProviderService:
         # Query ProviderKey directly by user_id
         from app.models.provider_key import ProviderKey
 
-        provider_key_records = (
-            self.db.query(ProviderKey).filter(ProviderKey.user_id == self.user_id).all()
-        )
+        result = await self.db.execute(select(ProviderKey).filter(ProviderKey.user_id == self.user_id))
+        provider_key_records = result.scalars().all()
 
         keys = {}
         for provider_key in provider_key_records:
-            model_mapping = self._parse_model_mapping(provider_key.model_mapping)
+            model_mapping = provider_key.model_mapping or {}
 
             keys[provider_key.provider_name] = {
                 "api_key": decrypt_api_key(provider_key.encrypted_api_key),
@@ -322,6 +280,7 @@ class ProviderService:
         )
 
         if not matching_provider:
+            logger.error(f"No matching provider found for {original_model}")
             raise InvalidProviderException(original_model)
 
         provider_data = self.provider_keys[matching_provider]
@@ -358,6 +317,7 @@ class ProviderService:
                     provider_data.get("base_url"),
                 )
 
+        logger.error(f"No matching provider found for {model}")
         raise InvalidProviderException(model)
 
     def _get_provider_info(self, model: str) -> tuple[str, str, str | None]:
@@ -365,9 +325,9 @@ class ProviderService:
         Determine the provider based on the model name.
         """
         if not self._keys_loaded:
-            raise RuntimeError(
-                "Provider keys must be loaded before calling _get_provider_info. Call _load_provider_keys_async() first."
-            )
+            error_message = "Provider keys must be loaded before calling _get_provider_info. Call _load_provider_keys_async() first."
+            logger.error(error_message)
+            raise RuntimeError(error_message)
 
         provider_name, model_name_no_prefix = self._extract_provider_name_prefix(model)
 
@@ -412,7 +372,7 @@ class ProviderService:
             cache_key = f"{base_url}:{hash(frozenset(provider_data.get('model_mapping', {}).items()))}"
 
             # Check if we have cached models for this provider
-            cached_models = self.get_cached_models(provider_name, cache_key)
+            cached_models = await self.get_cached_models(provider_name, cache_key)
             if cached_models:
                 models.extend(cached_models)
                 continue
@@ -439,7 +399,7 @@ class ProviderService:
                         for model in model_names
                     ]
                     # Cache the results
-                    self.cache_models(provider_name, cache_key, provider_models)
+                    await self.cache_models(provider_name, cache_key, provider_models)
 
                     return provider_models
                 except Exception as e:
@@ -485,24 +445,22 @@ class ProviderService:
 
         model = payload.get("model")
         if not model:
-            raise ValueError("Model is required")
-
-        try:
-            provider_name, actual_model, base_url = self._get_provider_info(model)
-
-            # Enforce scope restriction (case-insensitive).
-            if allowed_provider_names is not None and (
-                provider_name.lower() not in {p.lower() for p in allowed_provider_names}
-            ):
-                raise ValueError(
-                    f"API key is not permitted to use provider '{provider_name}'."
-                )
-        except ValueError as e:
-            # Use parameterized logging to avoid issues if the error message contains braces
-            logger.error("Error getting provider info for model {}: {}", model, str(e))
-            raise ValueError(
-                f"Invalid model ID: {model}. Please check your model configuration."
+            error_message = "Model is required"
+            logger.error(error_message)
+            raise BaseInvalidRequestException(
+                provider_name="unknown",
+                error=ValueError(error_message)
             )
+
+        provider_name, actual_model, base_url = self._get_provider_info(model)
+
+        # Enforce scope restriction (case-insensitive).
+        if allowed_provider_names is not None and (
+            provider_name.lower() not in {p.lower() for p in allowed_provider_names}
+        ):
+            error_message = f"API key is not permitted to use provider '{provider_name}'."
+            logger.error(error_message)
+            raise InvalidForgeKeyException(error=ValueError(error_message))
 
         logger.debug(
             f"Processing request for provider: {provider_name}, model: {actual_model}, endpoint: {endpoint}"
@@ -513,7 +471,9 @@ class ProviderService:
 
         # Get the provider's API key
         if provider_name not in self.provider_keys:
-            raise ValueError(f"No API key found for provider {provider_name}")
+            error_message = f"API key is not permitted to use provider '{provider_name}'."
+            logger.error(error_message)
+            raise InvalidForgeKeyException(error=ValueError(error_message))
 
         serialized_api_key_config = self.provider_keys[provider_name]["api_key"]
         provider_adapter_cls = ProviderAdapterFactory.get_adapter_cls(provider_name)
@@ -534,9 +494,9 @@ class ProviderService:
         elif "images/generations" in endpoint:
             # TODO: we only support openai for now
             if provider_name != "openai":
-                raise ValueError(
-                    f"Unsupported endpoint: {endpoint} for provider {provider_name}"
-                )
+                error_message = f"Unsupported endpoint: {endpoint} for provider {provider_name}"
+                logger.error(error_message)
+                raise NotImplementedError(error_message)
             result = await adapter.process_image_generation(
                 endpoint,
                 payload,
@@ -545,9 +505,9 @@ class ProviderService:
         elif "images/edits" in endpoint:
             # TODO: we only support openai for now
             if provider_name != "openai":
-                raise NotImplementedError(
-                    f"Unsupported endpoint: {endpoint} for provider {provider_name}"
-                )
+                error_message = f"Unsupported endpoint: {endpoint} for provider {provider_name}"
+                logger.error(error_message)
+                raise NotImplementedError(error_message)
             result = await adapter.process_image_edits(
                 endpoint,
                 payload,
@@ -560,7 +520,9 @@ class ProviderService:
                 api_key,
             )
         else:
-            raise ValueError(f"Unsupported endpoint: {endpoint}")
+            error_message = f"Unsupported endpoint: {endpoint}"
+            logger.error(error_message)
+            raise NotImplementedError(error_message)
 
         # Track usage statistics if it's not a streaming response
         if not inspect.isasyncgen(result):
@@ -576,12 +538,9 @@ class ProviderService:
             # Record the usage statistics using the new logging method
             # Use a fresh DB session for logging, since the original request session
             # may have been closed by FastAPI after the response was returned.
-            from sqlalchemy.orm import Session
+            from app.core.database import get_db_session
 
-            from app.core.database import SessionLocal
-
-            new_db_session: Session = SessionLocal()
-            try:
+            async with get_db_session() as new_db_session:
                 await UsageStatsService.log_api_request(
                     db=new_db_session,
                     user_id=self.user_id,
@@ -591,9 +550,7 @@ class ProviderService:
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                 )
-            finally:
-                new_db_session.close()
-            return result
+                return result
         else:
             # For streaming responses, wrap the generator to count tokens
             async def token_counting_stream() -> AsyncGenerator[bytes, None]:
@@ -688,12 +645,9 @@ class ProviderService:
 
                     # Use a fresh DB session for logging, since the original request session
                     # may have been closed by FastAPI after the response was returned.
-                    from sqlalchemy.orm import Session
+                    from app.core.database import get_db_session
 
-                    from app.core.database import SessionLocal
-
-                    new_db_session: Session = SessionLocal()
-                    try:
+                    async with get_db_session() as new_db_session:
                         await UsageStatsService.log_api_request(
                             db=new_db_session,
                             user_id=self.user_id,
@@ -703,14 +657,12 @@ class ProviderService:
                             input_tokens=input_tokens,
                             output_tokens=output_tokens,
                         )
-                    finally:
-                        new_db_session.close()
 
             # End of token_counting_stream function
             return token_counting_stream()
 
 
-def create_default_tensorblock_provider_for_user(user_id: int, db: Session) -> None:
+async def create_default_tensorblock_provider_for_user(user_id: int, db: AsyncSession) -> None:
     """
     Create a default TensorBlock provider key for a new user.
     This allows users to use Forge immediately without binding their own API keys.
@@ -752,12 +704,12 @@ def create_default_tensorblock_provider_for_user(user_id: int, db: Session) -> N
         )
 
         db.add(provider_key)
-        db.commit()
+        await db.commit()
 
         logger.info(f"Created default TensorBlock provider for user {user_id}")
 
     except Exception as e:
-        db.rollback()
+        await db.rollback()
         logger.error(
             "Error creating default TensorBlock provider for user {}: {}",
             user_id,

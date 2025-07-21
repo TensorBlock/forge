@@ -1,3 +1,4 @@
+# TODO: deprecate this and move to async cache
 import functools
 import os
 import time
@@ -146,9 +147,12 @@ def cached(cache_instance: Cache, key_func: Callable[[Any], str] = None):
 
 # User-specific functions
 def get_cached_user(api_key: str) -> CachedUser | None:
-    """Get a user from cache by API key"""
+    """Get a user from cache by Forge API key"""
     if not api_key:
         return None
+    # Remove the forge- prefix for caching from the API key
+    if api_key.startswith("forge-"):
+        api_key = api_key[6:]
     cached_data = user_cache.get(f"user:{api_key}")
     if cached_data:
         return CachedUser.model_validate(cached_data)
@@ -156,18 +160,47 @@ def get_cached_user(api_key: str) -> CachedUser | None:
 
 
 def cache_user(api_key: str, user: User) -> None:
-    """Cache a user by API key"""
+    """Cache a user by Forge API key"""
     if not api_key or user is None:
         return
     cached_user = CachedUser.model_validate(user)
+    # Remove the forge- prefix for caching from the API key
+    if api_key.startswith("forge-"):
+        api_key = api_key[6:]
     user_cache.set(f"user:{api_key}", cached_user.model_dump())
 
 
 def invalidate_user_cache(api_key: str) -> None:
-    """Invalidate user cache for a specific API key"""
+    """Invalidate user cache for a specific Forge API key"""
     if not api_key:
         return
+    # Remove the forge- prefix for caching from the API key
+    if api_key.startswith("forge-"):
+        api_key = api_key[6:]
     user_cache.delete(f"user:{api_key}")
+
+
+def invalidate_forge_scope_cache(api_key: str) -> None:
+    """Invalidate forge scope cache for a specific API key.
+    
+    Args:
+        api_key (str): The API key to invalidate cache for. Can include or exclude 'forge-' prefix.
+    """
+    if not api_key:
+        return
+    
+    # The cache key format uses the API key WITHOUT the "forge-" prefix
+    # to match how it's set in get_user_by_api_key()
+    cache_key = api_key
+    if cache_key.startswith("forge-"):
+        cache_key = cache_key[6:]  # Remove "forge-" prefix to match cache setting format
+    
+    provider_service_cache.delete(f"forge_scope:{cache_key}")
+    
+    if DEBUG_CACHE:
+        # Mask the API key for logging
+        masked_key = cache_key[:8] + "..." if len(cache_key) > 8 else cache_key
+        logger.debug(f"Cache: Invalidated forge scope cache for Forge API key: {masked_key}")
 
 
 # Provider service functions
@@ -300,7 +333,7 @@ def invalidate_all_caches() -> None:
 async def warm_cache(db: Session) -> None:
     """Pre-cache frequently accessed data"""
     from app.core.security import decrypt_api_key
-    from app.models.provider_key import ProviderKey
+    from app.models.forge_api_key import ForgeApiKey
     from app.models.user import User
     from app.services.provider_service import ProviderService
 
@@ -310,17 +343,15 @@ async def warm_cache(db: Session) -> None:
     # Cache active users
     active_users = db.query(User).filter(User.is_active).all()
     for user in active_users:
-        # Get user's API keys
-        api_keys = db.query(ProviderKey).filter(ProviderKey.user_id == user.id).all()
-        for key in api_keys:
-            # Decrypt the API key before caching
-            decrypted_key = decrypt_api_key(key.encrypted_api_key)
-            cache_user(decrypted_key, user)
-
-    # Cache provider services for active users
-    for user in active_users:
-        service = ProviderService.get_instance(user, db)
-        cache_provider_service(user.id, service)
+        # Get user's Forge API keys
+        forge_api_keys = (
+            db.query(ForgeApiKey)
+            .filter(ForgeApiKey.user_id == user.id, ForgeApiKey.is_active)
+            .all()
+        )
+        for key in forge_api_keys:
+            # Cache user with their Forge API key
+            cache_user(key.key, user)
 
     if DEBUG_CACHE:
         logger.info(f"Cache: Warm-up complete. Cached {len(active_users)} users")

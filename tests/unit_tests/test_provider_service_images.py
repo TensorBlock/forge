@@ -23,40 +23,38 @@ from app.models.provider_key import ProviderKey
 from app.models.user import User
 from app.services.provider_service import ProviderService
 from app.services.providers.adapter_factory import ProviderAdapterFactory
-from app.core.cache import provider_service_cache, user_cache
+from app.core.async_cache import async_provider_service_cache, async_user_cache
 
 
 class TestProviderServiceImages(TestCase):
     """Test cases for ProviderService images endpoints"""
 
-    def setUp(self):
+    async def asyncSetUp(self):
         # Mock user with provider keys
         self.user = MagicMock(spec=User)
         self.provider_key_openai = MagicMock(spec=ProviderKey)
         self.provider_key_openai.provider_name = "openai"
         self.provider_key_openai.encrypted_api_key = "encrypted_openai_key"
         self.provider_key_openai.base_url = None
-        self.provider_key_openai.model_mapping = json.dumps({"dall-e-2": "dall-e-2"})
+        self.provider_key_openai.model_mapping = {"dall-e-2": "dall-e-2"}
 
         self.provider_key_anthropic = MagicMock(spec=ProviderKey)
         self.provider_key_anthropic.provider_name = "anthropic"
         self.provider_key_anthropic.encrypted_api_key = "encrypted_anthropic_key"
         self.provider_key_anthropic.base_url = None
-        self.provider_key_anthropic.model_mapping = json.dumps(
-            {"custom-anthropic": "claude-3-opus", "claude-3-opus": "claude-3-opus"}
-        )
+        self.provider_key_anthropic.model_mapping = {"custom-anthropic": "claude-3-opus", "claude-3-opus": "claude-3-opus"}
 
         self.user.provider_keys = [
             self.provider_key_openai,
             self.provider_key_anthropic,
         ]
 
-        # Mock DB
-        self.db = MagicMock()
+        # Mock AsyncSession DB
+        self.db = AsyncMock()
 
         # Clear caches
-        provider_service_cache.clear()
-        user_cache.clear()
+        await async_provider_service_cache.clear()
+        await async_user_cache.clear()
 
         # Remove ProviderService creation from setUp
         # It will be created in each test after patching
@@ -85,15 +83,19 @@ class TestProviderServiceImages(TestCase):
         # Create the service with the NEW constructor signature (user.id)
         self.user.id = 1
 
-        # Mock the database query that the new loading mechanism uses
-        self.db.query.return_value.filter.return_value.all.return_value = [
+        # Mock the async database execute() pattern for provider keys
+        mock_result = MagicMock()  # Result object should be sync, not AsyncMock
+        mock_scalars = MagicMock()  # Don't use AsyncMock for scalars object
+        mock_scalars.all.return_value = [
             self.provider_key_openai,
             self.provider_key_anthropic,
         ]
+        mock_result.scalars.return_value = mock_scalars  # scalars() returns sync object
+        self.db.execute = AsyncMock(return_value=mock_result)  # Only execute() is async
 
         service = ProviderService(self.user.id, self.db)
         # Let the service load keys properly through the new mechanism
-        service._load_provider_keys()
+        await service._load_provider_keys_async()
 
         # mock openai image generation response
         # no need to mock the response for anthropic
@@ -117,7 +119,7 @@ class TestProviderServiceImages(TestCase):
         mock_anthropic_adapter.process_image_generation.side_effect = ValueError(
             "Unsupported endpoint: images/generations for provider anthropic"
         )
-        with self.assertRaises(ValueError) as context:
+        with self.assertRaises(NotImplementedError) as context:
             await service.process_request(
                 "images/generations", {"model": "claude-3-opus"}
             )
@@ -151,15 +153,19 @@ class TestProviderServiceImages(TestCase):
         # Create the service with the NEW constructor signature (user.id)
         self.user.id = 1
 
-        # Mock the database query that the new loading mechanism uses
-        self.db.query.return_value.filter.return_value.all.return_value = [
+        # Mock the async database execute() pattern for provider keys
+        mock_result = MagicMock()  # Result object should be sync, not AsyncMock
+        mock_scalars = MagicMock()  # Don't use AsyncMock for scalars object
+        mock_scalars.all.return_value = [
             self.provider_key_openai,
             self.provider_key_anthropic,
         ]
+        mock_result.scalars.return_value = mock_scalars  # scalars() returns sync object
+        self.db.execute = AsyncMock(return_value=mock_result)  # Only execute() is async
 
         service = ProviderService(self.user.id, self.db)
         # Let the service load keys properly through the new mechanism
-        service._load_provider_keys()
+        await service._load_provider_keys_async()
 
         # mock openai image edits response
         # no need to mock the response for anthropic

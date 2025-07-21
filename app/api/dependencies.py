@@ -12,17 +12,20 @@ import requests
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import APIKeyHeader, OAuth2PasswordBearer
 from jose import JWTError, jwt
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.api.schemas.user import TokenData
 from app.core.async_cache import (
-    async_provider_service_cache,
     cache_user_async,
     get_cached_user_async,
     invalidate_user_cache_async,
+    forge_scope_cache_async,
+    get_forge_scope_cache_async,
 )
-from app.core.database import get_db
+from app.core.database import get_db, get_async_db
 from app.core.logger import get_logger
 from app.core.security import (
     ALGORITHM,
@@ -90,7 +93,7 @@ async def fetch_and_cache_jwks() -> list | None:
 
 
 async def get_current_user(
-    db: Session = Depends(get_db), token: str = Depends(oauth2_scheme)
+    db: AsyncSession = Depends(get_async_db), token: str = Depends(oauth2_scheme)
 ):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -105,7 +108,9 @@ async def get_current_user(
         token_data = TokenData(username=username)
     except JWTError as err:
         raise credentials_exception from err
-    user = db.query(User).filter(User.username == token_data.username).first()
+    
+    result = await db.execute(select(User).filter(User.username == token_data.username))
+    user = result.scalar_one_or_none()
     if user is None:
         raise credentials_exception
     return user
@@ -142,7 +147,7 @@ async def get_api_key_from_headers(request: Request) -> str:
 
 async def get_user_by_api_key(
     request: Request = None,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ) -> User:
     """Get user by API key from headers, with caching"""
     api_key_from_header = await get_api_key_from_headers(request)
@@ -180,15 +185,14 @@ async def get_user_by_api_key(
 
     # Try scope cache first – this doesn't remove the need to verify the key, but it
     # avoids an extra query later in /models.
-    scope_cache_key = f"forge_scope:{api_key}"
-    cached_scope = await async_provider_service_cache.get(scope_cache_key)
+    cached_scope = await get_forge_scope_cache_async(api_key)
 
-    api_key_record = (
-        db.query(ForgeApiKey)
-        .options(joinedload(ForgeApiKey.allowed_provider_keys))
+    result = await db.execute(
+        select(ForgeApiKey)
+        .options(selectinload(ForgeApiKey.allowed_provider_keys))
         .filter(ForgeApiKey.key == api_key_from_header, ForgeApiKey.is_active)
-        .first()
     )
+    api_key_record = result.scalar_one_or_none()
 
     if not api_key_record:
         raise HTTPException(
@@ -197,12 +201,12 @@ async def get_user_by_api_key(
         )
 
     # Get the user associated with this API key and EAGER LOAD all provider keys
-    user = (
-        db.query(User)
-        .options(joinedload(User.provider_keys))
+    result = await db.execute(
+        select(User)
+        .options(selectinload(User.provider_keys))
         .filter(User.id == api_key_record.user_id)
-        .first()
     )
+    user = result.scalar_one_or_none()
 
     if not user:
         raise HTTPException(
@@ -219,9 +223,7 @@ async def get_user_by_api_key(
             pk.provider_name for pk in api_key_record.allowed_provider_keys
         ]
         # Cache it (short TTL – scope changes are rare)
-        await async_provider_service_cache.set(
-            scope_cache_key, allowed_provider_names, ttl=300
-        )
+        await forge_scope_cache_async(api_key, allowed_provider_names, ttl=300)
     else:
         allowed_provider_names = cached_scope
 
@@ -232,7 +234,7 @@ async def get_user_by_api_key(
 
     # Update last used timestamp for the API key
     api_key_record.last_used_at = datetime.utcnow()
-    db.commit()
+    await db.commit()
 
     # Cache the user data for future requests
     await cache_user_async(api_key, user)
@@ -340,7 +342,7 @@ async def validate_clerk_jwt(token: str = Depends(clerk_token_header)):
 
 
 async def get_current_user_from_clerk(
-    db: Session = Depends(get_db), token_payload: dict = Depends(validate_clerk_jwt)
+    db: AsyncSession = Depends(get_async_db), token_payload: dict = Depends(validate_clerk_jwt)
 ):
     """Get the current user from Clerk token, creating if needed"""
     from urllib.parse import quote
@@ -354,7 +356,8 @@ async def get_current_user_from_clerk(
         )
 
     # Find user by clerk_user_id
-    user = db.query(User).filter(User.clerk_user_id == clerk_user_id).first()
+    result = await db.execute(select(User).filter(User.clerk_user_id == clerk_user_id))
+    user = result.scalar_one_or_none()
 
     # User doesn't exist yet, create one
     if not user:
@@ -400,7 +403,8 @@ async def get_current_user_from_clerk(
             username = email
 
             # Check if username exists and make unique if needed
-            existing_user = db.query(User).filter(User.username == username).first()
+            result = await db.execute(select(User).filter(User.username == username))
+            existing_user = result.scalar_one_or_none()
             if existing_user:
                 import random
 
@@ -414,20 +418,22 @@ async def get_current_user_from_clerk(
             username = clerk_user_id
 
         # Check if user exists with this email
-        existing_user = db.query(User).filter(User.email == email).first()
+        result = await db.execute(select(User).filter(User.email == email))
+        existing_user = result.scalar_one_or_none()
         if existing_user:
             # Link existing user to Clerk ID
             try:
                 existing_user.clerk_user_id = clerk_user_id
-                db.commit()
+                await db.commit()
                 return existing_user
             except IntegrityError:
                 # Another request might have already linked this user or created a new one
-                db.rollback()
+                await db.rollback()
                 # Retry the query to get the user
-                user = (
-                    db.query(User).filter(User.clerk_user_id == clerk_user_id).first()
+                result = await db.execute(
+                    select(User).filter(User.clerk_user_id == clerk_user_id)
                 )
+                user = result.scalar_one_or_none()
                 if user:
                     return user
                 # If still no user, continue with creation attempt
@@ -441,17 +447,15 @@ async def get_current_user_from_clerk(
                 username=username,
                 clerk_user_id=clerk_user_id,
                 is_active=True,
-                hashed_password=get_password_hash(
-                    "CLERK_AUTH_USER"
-                ),  # Add placeholder password for Clerk users
+                hashed_password="",  # Clerk handles authentication
             )
             db.add(user)
-            db.commit()
-            db.refresh(user)
+            await db.commit()
+            await db.refresh(user)
 
             # Create default TensorBlock provider for the new user
             try:
-                create_default_tensorblock_provider_for_user(user.id, db)
+                await create_default_tensorblock_provider_for_user(user.id, db)
             except Exception as e:
                 # Log error but don't fail user creation
                 logger.warning(
@@ -461,12 +465,13 @@ async def get_current_user_from_clerk(
             return user
         except IntegrityError as e:
             # Handle race condition: another request might have created the user
-            db.rollback()
+            await db.rollback()
             if "users_clerk_user_id_key" in str(e) or "clerk_user_id" in str(e):
                 # Retry the query to get the user that was created by another request
-                user = (
-                    db.query(User).filter(User.clerk_user_id == clerk_user_id).first()
+                result = await db.execute(
+                    select(User).filter(User.clerk_user_id == clerk_user_id)
                 )
+                user = result.scalar_one_or_none()
                 if user:
                     return user
                 else:

@@ -8,8 +8,11 @@ from typing import Any, Callable
 import aiohttp
 
 from app.core.logger import get_logger
+from app.exceptions.exceptions import ProviderAPIException, InvalidCompletionRequestException
 
 from .base import ProviderAdapter
+
+logger = get_logger(name="anthropic_adapter")
 
 ANTHROPIC_DEFAULT_MAX_TOKENS = 4096
 
@@ -62,21 +65,23 @@ class AnthropicAdapter(ProviderAdapter):
         if isinstance(content, str):
             return content
 
-        try:
-            result = []
-            for msg in content:
-                _type = msg["type"]
-                if _type == "text":
-                    result.append({"type": "text", "text": msg["text"]})
-                elif _type == "image_url":
-                    result.append(
-                        AnthropicAdapter.convert_openai_image_content_to_anthropic(msg)
-                    )
-                else:
-                    raise NotImplementedError(f"{_type} is not supported")
-            return result
-        except Exception as e:
-            raise NotImplementedError("Unsupported content type") from e
+        result = []
+        for msg in content:
+            _type = msg["type"]
+            if _type == "text":
+                result.append({"type": "text", "text": msg["text"]})
+            elif _type == "image_url":
+                result.append(
+                    AnthropicAdapter.convert_openai_image_content_to_anthropic(msg)
+                )
+            else:
+                error_message = f"{_type} is not supported"
+                logger.error(error_message)
+                raise InvalidCompletionRequestException(
+                    provider_name="anthropic",
+                    error=ValueError(error_message)
+                )
+        return result
 
     async def list_models(self, api_key: str) -> list[str]:
         """List all models (verbosely) supported by the provider"""
@@ -99,7 +104,12 @@ class AnthropicAdapter(ProviderAdapter):
         ):
             if response.status != HTTPStatus.OK:
                 error_text = await response.text()
-                raise ValueError(f"Anthropic API error: {error_text}")
+                logger.error(f"List Models API error for {self.provider_name}: {error_text}")
+                raise ProviderAPIException(
+                    provider_name=self.provider_name,
+                    error_code=response.status,
+                    error_message=error_text
+                )
             resp = await response.json()
             self.CLAUDE_MODEL_MAPPING = {
                 d["display_name"]: d["id"] for d in resp["data"]
@@ -209,8 +219,11 @@ class AnthropicAdapter(ProviderAdapter):
                     if error_handler:
                         error_handler(error_text, response.status)
                     else:
-                        raise ValueError(
-                            f"Anthropic API error: {response.status} - {error_text}"
+                        logger.error(f"Completion API error for {error_text}")
+                        raise ProviderAPIException(
+                            provider_name="anthropic",
+                            error_code=response.status,
+                            error_message=error_text,
                         )
 
                 buffer = ""
@@ -227,13 +240,11 @@ class AnthropicAdapter(ProviderAdapter):
                             elif line.startswith("data:"):
                                 data_str = line[len("data:") :].strip()
 
-                        # logger.info(f"Anthropic Raw Event - Type: {event_type}, Data String: {data_str}")
                         if not event_type or data_str is None:
                             continue
 
                         try:
                             data = json.loads(data_str)
-                            # logger.info(f"Anthropic Parsed Data: {data}")
                             openai_chunk = None
                             finish_reason = None
                             # --- Event Processing Logic ---
@@ -245,7 +256,6 @@ class AnthropicAdapter(ProviderAdapter):
                                     captured_input_tokens = message_data["usage"].get(
                                         "input_tokens", 0
                                     )
-                                    # logger.info(f"Captured input_tokens: {captured_input_tokens}")
                                     captured_output_tokens = message_data["usage"].get(
                                         "output_tokens", captured_output_tokens
                                     )
@@ -282,7 +292,6 @@ class AnthropicAdapter(ProviderAdapter):
                                     captured_output_tokens = usage_data_in_delta.get(
                                         "output_tokens", captured_output_tokens
                                     )
-                                    # logger.info(f"Captured output_tokens from top-level delta usage: {captured_output_tokens}")
                                     if captured_input_tokens > 0:
                                         usage_info_complete = True
 
@@ -297,7 +306,6 @@ class AnthropicAdapter(ProviderAdapter):
                                     captured_output_tokens = usage.get(
                                         "output_tokens", captured_output_tokens
                                     )
-                                    # logger.info(f"Captured usage from stop: in={captured_input_tokens}, out={captured_output_tokens}")
                                     if (
                                         captured_input_tokens > 0
                                         and captured_output_tokens > 0
@@ -330,13 +338,11 @@ class AnthropicAdapter(ProviderAdapter):
                                 yield f"data: {json.dumps(usage_chunk)}\n\n".encode()
                                 # Reset flag to prevent duplicate yields
                                 usage_info_complete = False
-                                # logger.info(f"Yielded usage chunk: {usage_chunk}")
 
-                        except json.JSONDecodeError:
-                            # logger.warning(f"Anthropic stream: Failed to parse JSON: {data_str}")
+                        except json.JSONDecodeError as e:
+                            logger.warning(f"Stream API error for {self.provider_name}: Failed to parse JSON: {e}")
                             continue
-                        except Exception:
-                            # logger.error(f"Anthropic stream processing error: {e}", exc_info=True)
+                        except Exception as e:
                             continue
 
             # Final SSE message
@@ -356,10 +362,12 @@ class AnthropicAdapter(ProviderAdapter):
         ):
             if response.status != HTTPStatus.OK:
                 error_text = await response.text()
-                if error_handler:
-                    error_handler(error_text, response.status)
-                else:
-                    raise ValueError(f"Anthropic API error: {error_text}")
+                logger.error(f"Completion API error for {error_text}")
+                raise ProviderAPIException(
+                    provider_name="anthropic",
+                    error_code=response.status,
+                    error_message=error_text,
+                )
 
             anthropic_response = await response.json()
 

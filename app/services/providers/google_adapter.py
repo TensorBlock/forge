@@ -10,6 +10,8 @@ from typing import Any
 import aiohttp
 
 from app.core.logger import get_logger
+from app.exceptions.exceptions import BaseForgeException, BaseInvalidRequestException, ProviderAPIException, InvalidCompletionRequestException, \
+    InvalidEmbeddingsRequestException
 
 from .base import ProviderAdapter
 
@@ -55,7 +57,12 @@ class GoogleAdapter(ProviderAdapter):
         ):
             if response.status != HTTPStatus.OK:
                 error_text = await response.text()
-                raise ValueError(f"Google API error: {error_text}")
+                logger.error(f"List Models API error for {self.provider_name}: {error_text}")
+                raise ProviderAPIException(
+                    provider_name=self.provider_name,
+                    error_code=response.status,
+                    error_message=error_text
+                )
             resp = await response.json()
             self.GOOGLE_MODEL_MAPPING = {
                 d["displayName"]: d["name"] for d in resp["models"]
@@ -91,8 +98,12 @@ class GoogleAdapter(ProviderAdapter):
         # First, get the file metadata from the URL
         async with session.head(file_url) as response:
             if response.status != HTTPStatus.OK:
-                raise Exception(
-                    f"Gemini Upload API error: Failed to fetch file metadata from URL: {response.status}"
+                error_text = await response.text()
+                logger.error(f"Gemini Upload API error: Failed to fetch file metadata from URL: {error_text}")
+                raise ProviderAPIException(
+                    provider_name="google",
+                    error_code=response.status,
+                    error_message=error_text
                 )
 
             mime_type = response.headers.get("Content-Type", "application/octet-stream")
@@ -116,13 +127,23 @@ class GoogleAdapter(ProviderAdapter):
             f"{base_url}?key={api_key}", headers=headers, json=metadata
         ) as response:
             if response.status != HTTPStatus.OK:
-                raise Exception(
-                    f"Gemini Upload API error: Failed to initiate upload: {response.status}"
+                error_text = await response.text()
+                logger.error(f"Gemini Upload API error: Failed to initiate upload: {error_text}")
+                raise ProviderAPIException(
+                    provider_name="google",
+                    error_code=response.status,
+                    error_message=error_text
                 )
 
             upload_url = response.headers.get("X-Goog-Upload-URL")
             if not upload_url:
-                raise Exception("No upload URL received from server")
+                error_text = "Gemini Upload API error: No upload URL received from server"
+                logger.error(error_text)
+                raise ProviderAPIException(
+                    provider_name="google",
+                    error_code=404,
+                    error_message=error_text
+                )
 
         # Upload the file content using streaming
         upload_headers = {
@@ -134,16 +155,24 @@ class GoogleAdapter(ProviderAdapter):
         # Stream the file content directly from the source URL to Gemini API
         async with session.get(file_url) as source_response:
             if source_response.status != HTTPStatus.OK:
-                raise Exception(
-                    f"Gemini Upload API error: Failed to fetch file content: {source_response.status}"
+                error_text = await source_response.text()
+                logger.error(f"Gemini Upload API error: Failed to fetch file content: {error_text}")
+                raise ProviderAPIException(
+                    provider_name="google",
+                    error_code=source_response.status,
+                    error_message=error_text
                 )
 
             async with session.put(
                 upload_url, headers=upload_headers, data=source_response.content
             ) as upload_response:
                 if upload_response.status != HTTPStatus.OK:
-                    raise Exception(
-                        f"Gemini Upload API error: Failed to upload file: {upload_response.status}"
+                    error_text = await upload_response.text()
+                    logger.error(f"Gemini Upload API error: Failed to upload file: {error_text}")
+                    raise ProviderAPIException(
+                        provider_name="google",
+                        error_code=upload_response.status,
+                        error_message=error_text
                     )
 
                 return await upload_response.json()
@@ -179,9 +208,16 @@ class GoogleAdapter(ProviderAdapter):
                         "file_uri": result["file"]["uri"],
                     }
                 }
-            except Exception as e:
-                logger.error(f"Error uploading image to Google Gemini: {e}")
+            except ProviderAPIException as e:
                 raise e
+            except Exception as e:
+                error_text = f"Error uploading image to Google Gemini: {e}"
+                logger.error(error_text)
+                raise ProviderAPIException(
+                    provider_name="google",
+                    error_code=400,
+                    error_message=error_text
+                )
 
     @staticmethod
     async def convert_openai_content_to_google(
@@ -205,10 +241,21 @@ class GoogleAdapter(ProviderAdapter):
                         )
                     )
                 else:
-                    raise NotImplementedError(f"{_type} is not supported")
+                    error_text = f"{_type} is not supported"
+                    logger.error(error_text)
+                    raise InvalidCompletionRequestException(
+                        provider_name="google",
+                        error=ValueError(error_text)
+                    )
             return result
+        except BaseForgeException as e:
+            raise e
         except Exception as e:
-            raise NotImplementedError("Unsupported content type") from e
+            logger.error(f"Error converting OpenAI content to Google: {e}")
+            raise BaseInvalidRequestException(
+                provider_name="google",
+                error=e
+            )
 
     async def process_completion(
         self,
@@ -256,10 +303,19 @@ class GoogleAdapter(ProviderAdapter):
 
         try:
             if not google_payload:
-                raise ValueError("Empty payload for Google API request")
+                error_text = f"Empty payload for {self.provider_name} API request"
+                logger.error(error_text)
+                raise InvalidCompletionRequestException(
+                   provider_name=self.provider_name,
+                    error=ValueError(error_text)
+                )
             if not api_key:
-                raise ValueError("Missing API key for Google request")
-
+                error_text = f"Missing API key for {self.provider_name} API request"
+                logger.error(error_text)
+                raise InvalidCompletionRequestException(
+                    provider_name=self.provider_name,
+                    error=ValueError(error_text)
+                )
             headers = {"Content-Type": "application/json", "Accept": "application/json"}
             logger.debug(
                 f"Google API request - URL: {url}, Payload sample: {str(google_payload)[:200]}..."
@@ -273,8 +329,12 @@ class GoogleAdapter(ProviderAdapter):
             ):
                 if response.status != HTTPStatus.OK:
                     error_text = await response.text()
-                    logger.error(f"Google API error: {response.status} - {error_text}")
-                    raise ValueError(f"Google stream API error: {error_text}")
+                    logger.error(f"Completion Streaming API error for {self.provider_name}: {error_text}")
+                    raise ProviderAPIException(
+                        provider_name=self.provider_name,
+                        error_code=response.status,
+                        error_message=error_text
+                    )
 
                 # Process response in chunks
                 buffer = ""
@@ -432,7 +492,6 @@ class GoogleAdapter(ProviderAdapter):
     ) -> dict[str, Any]:
         """Process a regular (non-streaming) chat completion with Google Gemini"""
         model = payload.get("model", "")
-        logger.info(f"Processing regular chat completion for model: {model}")
 
         # Convert payload to Google format
         google_payload = await self.convert_openai_completion_payload_to_google(payload, api_key)
@@ -441,7 +500,6 @@ class GoogleAdapter(ProviderAdapter):
         model_path = model if model.startswith("models/") else f"models/{model}"
 
         url = f"{self._base_url}/{model_path}:generateContent"
-        logger.info(f"Sending request to Google API: {url}")
 
         try:
             # Make the API request
@@ -449,10 +507,12 @@ class GoogleAdapter(ProviderAdapter):
 
             # Check for API key
             if not api_key:
-                raise ValueError("Missing API key for Google request")
-
-            logger.debug(f"Google API request - Headers: {headers}")
-            logger.debug(f"Google API request - URL: {url}")
+                error_text = f"Missing API key for {self.provider_name} API request"
+                logger.error(error_text)
+                raise InvalidCompletionRequestException(
+                    provider_name=self.provider_name,
+                    error=ValueError(error_text)
+                )
 
             async with (
                 aiohttp.ClientSession() as session,
@@ -461,25 +521,27 @@ class GoogleAdapter(ProviderAdapter):
                 ) as response,
             ):
                 response_status = response.status
-                logger.info(f"Google API response status: {response_status}")
-
                 if response_status != HTTPStatus.OK:
                     error_text = await response.text()
-                    logger.error(f"Google API error: {response_status} - {error_text}")
-
-                    raise ValueError(f"Google API error: {error_text}")
+                    logger.error(f"Completion API error for {self.provider_name}: {error_text}")
+                    raise ProviderAPIException(
+                        provider_name=self.provider_name,
+                        error_code=response_status,
+                        error_message=error_text
+                    )
 
                 response_json = await response.json()
-                logger.debug(
-                    f"Google API response: {json.dumps(response_json)[:200]}..."
-                )
 
                 # Convert to OpenAI format
                 return self.convert_google_completion_response_to_openai(response_json, model)
-
+        except BaseForgeException as e:
+            raise e
         except Exception as e:
             logger.error(f"Error in Google chat completion: {str(e)}", exc_info=True)
-            raise
+            raise BaseInvalidRequestException(
+                provider_name=self.provider_name,
+                error=e
+            )
 
     @staticmethod
     def convert_google_completion_response_to_openai(
@@ -600,7 +662,6 @@ class GoogleAdapter(ProviderAdapter):
         model_path = model if model.startswith("models/") else f"models/{model}"
 
         url = f"{self._base_url}/{model_path}:embedContent"
-        logger.info(f"Sending request to Google API: {url}")
 
         # Convert payload to Google format
         google_payload = self.convert_openai_embeddings_payload_to_google(payload)
@@ -610,7 +671,12 @@ class GoogleAdapter(ProviderAdapter):
 
             # Check for API key
             if not api_key:
-                raise ValueError("Missing API key for Google request")
+                error_text = f"Missing API key for {self.provider_name} API request"
+                logger.error(error_text)
+                raise InvalidEmbeddingsRequestException(
+                    provider_name=self.provider_name,
+                    error=ValueError(error_text)
+                )
 
             async with (
                 aiohttp.ClientSession() as session,
@@ -619,17 +685,22 @@ class GoogleAdapter(ProviderAdapter):
                 ) as response,
             ):
                 response_status = response.status
-                logger.info(f"Google API response status: {response_status}")
-
                 if response_status != HTTPStatus.OK:
                     error_text = await response.text()
-                    logger.error(f"Google API error: {response_status} - {error_text}")
-
-                    raise ValueError(f"Google API error: {error_text}")
+                    logger.error(f"Embeddings API error for {self.provider_name}: {error_text}")
+                    raise ProviderAPIException(
+                        provider_name=self.provider_name,
+                        error_code=response_status,
+                        error_message=error_text
+                    )
 
                 response_json = await response.json()
                 return self.convert_google_embeddings_response_to_openai(response_json, model)
-
+        except BaseForgeException as e:
+            raise e
         except Exception as e:
-            logger.error(f"Error in Google embeddings: {str(e)}", exc_info=True)
-            raise
+            logger.error(f"Error in {self.provider_name} embeddings: {str(e)}", exc_info=True)
+            raise BaseInvalidRequestException(
+                provider_name=self.provider_name,
+                error=e
+            )

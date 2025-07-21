@@ -24,6 +24,7 @@ class ProviderKeyCreate(ProviderKeyBase):
 
 class ProviderKeyUpdate(BaseModel):
     api_key: str | None = None
+    config: dict[str, str] | None = None
     base_url: str | None = None
     model_mapping: dict[str, str] | None = None
 

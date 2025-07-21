@@ -2,6 +2,11 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from app.core.logger import get_logger
+from app.exceptions.exceptions import InvalidCompletionRequestException
+
+logger = get_logger(name="openai_schemas")
+
 
 class OpenAIContentImageUrlModel(BaseModel):
     url: str
@@ -21,17 +26,35 @@ class OpenAIContentModel(BaseModel):
     def __init__(self, **data: Any):
         super().__init__(**data)
         if self.type not in ["text", "image_url", "input_audio"]:
-            raise ValueError(
-                f"Invalid type: {self.type}. Must be one of: text, image_url, input_audio"
+            error_message = f"Invalid type: {self.type}. Must be one of: text, image_url, input_audio"
+            logger.error(error_message)
+            raise InvalidCompletionRequestException(
+                provider_name="openai",
+                error=ValueError(error_message)
             )
 
         # Validate that the appropriate field is set based on type
         if self.type == "text" and self.text is None:
-            raise ValueError("text field must be set when type is 'text'")
+            error_message = "text field must be set when type is 'text'"
+            logger.error(error_message)
+            raise InvalidCompletionRequestException(
+                provider_name="openai",
+                error=ValueError(error_message)
+            )
         if self.type == "image_url" and self.image_url is None:
-            raise ValueError("image_url field must be set when type is 'image_url'")
+            error_message = "image_url field must be set when type is 'image_url'"
+            logger.error(error_message)
+            raise InvalidCompletionRequestException(
+                provider_name="openai",
+                error=ValueError(error_message)
+            )
         if self.type == "input_audio" and self.input_audio is None:
-            raise ValueError("input_audio field must be set when type is 'input_audio'")
+            error_message = "input_audio field must be set when type is 'input_audio'"
+            logger.error(error_message)
+            raise InvalidCompletionRequestException(
+                provider_name="openai",
+                error=ValueError(error_message)
+            )
 
 
 class ChatMessage(BaseModel):

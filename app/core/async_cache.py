@@ -10,7 +10,8 @@ import time
 from collections.abc import Callable
 from typing import Any, TypeVar
 
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from app.api.schemas.cached_user import CachedUser
 from app.core.logger import get_logger
@@ -159,9 +160,12 @@ async_provider_service_cache: "AsyncCache" = _AsyncBackend(
 
 # User-specific functions
 async def get_cached_user_async(api_key: str) -> CachedUser | None:
-    """Get a user from cache by API key asynchronously"""
+    """Get a user from cache by Forge API key asynchronously"""
     if not api_key:
         return None
+    # Remove the forge- prefix for caching from the API key
+    if api_key.startswith("forge-"):
+        api_key = api_key[6:]
     cached_data = await async_user_cache.get(f"user:{api_key}")
     if cached_data:
         return CachedUser.model_validate(cached_data)
@@ -169,18 +173,47 @@ async def get_cached_user_async(api_key: str) -> CachedUser | None:
 
 
 async def cache_user_async(api_key: str, user: User) -> None:
-    """Cache a user by API key asynchronously"""
+    """Cache a user by Forge API key asynchronously"""
     if not api_key or user is None:
         return
     cached_user = CachedUser.model_validate(user)
+    # Remove the forge- prefix for caching from the API key
+    if api_key.startswith("forge-"):
+        api_key = api_key[6:]
     await async_user_cache.set(f"user:{api_key}", cached_user.model_dump())
 
 
 async def invalidate_user_cache_async(api_key: str) -> None:
-    """Invalidate user cache for a specific API key asynchronously"""
+    """Invalidate user cache for a specific Forge API key asynchronously"""
     if not api_key:
         return
+    # Remove the forge- prefix for caching from the API key
+    if api_key.startswith("forge-"):
+        api_key = api_key[6:]
     await async_user_cache.delete(f"user:{api_key}")
+
+
+async def invalidate_forge_scope_cache_async(api_key: str) -> None:
+    """Invalidate forge scope cache for a specific API key asynchronously.
+    
+    Args:
+        api_key (str): The API key to invalidate cache for. Can include or exclude 'forge-' prefix.
+    """
+    if not api_key:
+        return
+    
+    # The cache key format uses the API key WITHOUT the "forge-" prefix
+    # to match how it's set in get_user_by_api_key()
+    cache_key = api_key
+    if cache_key.startswith("forge-"):
+        cache_key = cache_key[6:]  # Remove "forge-" prefix to match cache setting format
+    
+    await async_provider_service_cache.delete(f"forge_scope:{cache_key}")
+    
+    if DEBUG_CACHE:
+        # Mask the API key for logging
+        masked_key = cache_key[:8] + "..." if len(cache_key) > 8 else cache_key
+        logger.debug(f"Cache: Invalidated forge scope cache for API key: {masked_key} (async)")
 
 
 async def invalidate_user_cache_by_id_async(user_id: int) -> None:
@@ -223,6 +256,51 @@ async def invalidate_user_cache_by_id_async(user_id: int) -> None:
         if DEBUG_CACHE:
             logger.debug(f"Cache: Invalidated user cache for key: {key[:8]}...")
 
+async def get_forge_scope_cache_async(api_key: str) -> list[str] | None:
+    """Get the forge scope cache for a specific Forge API key asynchronously"""
+    if not api_key:
+        return None
+    # Remove the forge- prefix for caching from the API key
+    cache_key = api_key
+    if cache_key.startswith("forge-"):
+        cache_key = cache_key[6:]
+    return await async_provider_service_cache.get(f"forge_scope:{cache_key}")
+
+
+async def forge_scope_cache_async(api_key: str, allowed_provider_names: list[str], ttl: int = 300) -> None:
+    """Cache the forge scope cache for a specific Forge API key asynchronously"""
+    if not api_key:
+        return None
+    # Remove the forge- prefix for caching from the API key
+    cache_key = api_key
+    if cache_key.startswith("forge-"):
+        cache_key = cache_key[6:]
+    await async_provider_service_cache.set(f"forge_scope:{cache_key}", allowed_provider_names, ttl=ttl)
+    if DEBUG_CACHE:
+        # Mask the API key for logging
+        masked_key = cache_key[:8] + "..." if len(cache_key) > 8 else cache_key
+        logger.debug(f"Cache: set forge scope cache for Forge API key: {masked_key} (async)")
+
+
+async def invalidate_forge_scope_cache_async(api_key: str) -> None:
+    """Invalidate forge scope cache for a specific API key asynchronously.
+    
+    Args:
+        api_key (str): The API key to invalidate cache for. Can include or exclude 'forge-' prefix.
+    """
+    if not api_key:
+        return
+    
+    cache_key = api_key
+    if cache_key.startswith("forge-"):
+        cache_key = cache_key[6:]  # Remove "forge-" prefix to match cache setting format
+    
+    await async_provider_service_cache.delete(f"forge_scope:{cache_key}")
+    
+    if DEBUG_CACHE:
+        # Mask the API key for logging
+        masked_key = cache_key[:8] + "..." if len(cache_key) > 8 else cache_key
+        logger.debug(f"Cache: Invalidated forge scope cache for Forge API key: {masked_key} (async)")
 
 # Provider service functions
 async def get_cached_provider_service_async(user_id: int) -> Any:
@@ -314,7 +392,7 @@ async def invalidate_all_caches_async() -> None:
         logger.debug("Cache: Invalidated all caches")
 
 
-async def warm_cache_async(db: Session) -> None:
+async def warm_cache_async(db: AsyncSession) -> None:
     """Pre-cache frequently accessed data asynchronously"""
     from app.models.user import User
     from app.services.provider_service import ProviderService
@@ -323,16 +401,18 @@ async def warm_cache_async(db: Session) -> None:
         logger.info("Cache: Starting cache warm-up...")
 
     # Cache active users
-    active_users = db.query(User).filter(User.is_active).all()
+    result = await db.execute(select(User).filter(User.is_active))
+    active_users = result.scalars().all()
+    
     for user in active_users:
         # Get user's Forge API keys
-        forge_api_keys = (
-            db.query(ForgeApiKey)
+        result = await db.execute(
+            select(ForgeApiKey)
             .filter(ForgeApiKey.user_id == user.id, ForgeApiKey.is_active)
-            .all()
         )
+        forge_api_keys = result.scalars().all()
+        
         for key in forge_api_keys:
-            # Cache user with their Forge API key
             await cache_user_async(key.key, user)
 
     # Cache provider services for active users

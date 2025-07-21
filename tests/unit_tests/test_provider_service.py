@@ -22,13 +22,13 @@ from app.models.provider_key import ProviderKey
 from app.models.user import User
 from app.services.provider_service import ProviderService
 from app.services.providers.adapter_factory import ProviderAdapterFactory
-from app.core.cache import provider_service_cache, user_cache
+from app.core.async_cache import async_provider_service_cache, async_user_cache
 
 
 class TestProviderService(TestCase):
     """Test the provider service"""
 
-    def setUp(self):
+    async def asyncSetUp(self):
         # Reset the adapters cache
         ProviderService._adapters_cache = {}
 
@@ -38,63 +38,55 @@ class TestProviderService(TestCase):
         self.provider_key_openai.provider_name = "openai"
         self.provider_key_openai.encrypted_api_key = "encrypted_openai_key"
         self.provider_key_openai.base_url = None
-        self.provider_key_openai.model_mapping = json.dumps({"custom-gpt": "gpt-4"})
+        self.provider_key_openai.model_mapping = {"custom-gpt": "gpt-4"}
 
         self.provider_key_anthropic = MagicMock(spec=ProviderKey)
         self.provider_key_anthropic.provider_name = "anthropic"
         self.provider_key_anthropic.encrypted_api_key = "encrypted_anthropic_key"
         self.provider_key_anthropic.base_url = None
-        self.provider_key_anthropic.model_mapping = "{}"
+        self.provider_key_anthropic.model_mapping = {}
 
         self.provider_key_google = MagicMock(spec=ProviderKey)
         self.provider_key_google.provider_name = "gemini"
         self.provider_key_google.encrypted_api_key = "encrypted_gemini_key"
         self.provider_key_google.base_url = None
-        self.provider_key_google.model_mapping = json.dumps(
-            {"test-gemini": "models/gemini-2.0-flash"}
-        )
+        self.provider_key_google.model_mapping = {"test-gemini": "models/gemini-2.0-flash"}
 
         self.provider_key_xai = MagicMock(spec=ProviderKey)
         self.provider_key_xai.provider_name = "xai"
         self.provider_key_xai.encrypted_api_key = "encrypted_xai_key"
         self.provider_key_xai.base_url = None
-        self.provider_key_xai.model_mapping = json.dumps({"test-xai": "grok-2-1212"})
+        self.provider_key_xai.model_mapping = {"test-xai": "grok-2-1212"}
 
         self.provider_key_fireworks = MagicMock(spec=ProviderKey)
         self.provider_key_fireworks.provider_name = "fireworks"
         self.provider_key_fireworks.encrypted_api_key = "encrypted_fireworks_key"
         self.provider_key_fireworks.base_url = None
-        self.provider_key_fireworks.model_mapping = json.dumps(
-            {"test-fireworks": "accounts/fireworks/models/code-llama-7b"}
-        )
+        self.provider_key_fireworks.model_mapping = {"test-fireworks": "accounts/fireworks/models/code-llama-7b"}
 
         self.provider_key_openrouter = MagicMock(spec=ProviderKey)
         self.provider_key_openrouter.provider_name = "openrouter"
         self.provider_key_openrouter.encrypted_api_key = "encrypted_openrouter_key"
         self.provider_key_openrouter.base_url = None
-        self.provider_key_openrouter.model_mapping = json.dumps(
-            {"test-openrouter": "gpt-4o"}
-        )
+        self.provider_key_openrouter.model_mapping = {"test-openrouter": "gpt-4o"}
 
         self.provider_key_together = MagicMock(spec=ProviderKey)
         self.provider_key_together.provider_name = "together"
         self.provider_key_together.encrypted_api_key = "encrypted_together_key"
         self.provider_key_together.base_url = None
-        self.provider_key_together.model_mapping = json.dumps(
-            {"test-together": "UAE-Large-V1"}
-        )
+        self.provider_key_together.model_mapping = {"test-together": "UAE-Large-V1"}
 
         self.provider_key_azure = MagicMock(spec=ProviderKey)
         self.provider_key_azure.provider_name = "azure"
         self.provider_key_azure.encrypted_api_key = "encrypted_azure_key"
         self.provider_key_azure.base_url = "https://test-azure.openai.com"
-        self.provider_key_azure.model_mapping = json.dumps({"test-azure": "gpt-4o"})
+        self.provider_key_azure.model_mapping = {"test-azure": "gpt-4o"}
 
         self.provider_key_bedrock = MagicMock(spec=ProviderKey)
         self.provider_key_bedrock.provider_name = "bedrock"
         self.provider_key_bedrock.encrypted_api_key = "encrypted_bedrock_key"
         self.provider_key_bedrock.base_url = None
-        self.provider_key_bedrock.model_mapping = json.dumps({"test-bedrock": "claude-3-5-sonnet-20240620-v1:0"})
+        self.provider_key_bedrock.model_mapping = {"test-bedrock": "claude-3-5-sonnet-20240620-v1:0"}
 
         self.user.provider_keys = [
             self.provider_key_openai,
@@ -108,12 +100,12 @@ class TestProviderService(TestCase):
             self.provider_key_bedrock,
         ]
 
-        # Mock DB
-        self.db = MagicMock()
+        # Mock AsyncSession DB
+        self.db = AsyncMock()
 
         # Clear caches
-        provider_service_cache.clear()
-        user_cache.clear()
+        await async_provider_service_cache.clear()
+        await async_user_cache.clear()
 
         # Create the service with patched decrypt_api_key to avoid actual decryption
         with patch("app.services.provider_service.decrypt_api_key") as mock_decrypt:
@@ -141,8 +133,11 @@ class TestProviderService(TestCase):
             # Mock user.id for the new constructor signature
             self.user.id = 1
 
-            # Mock the database query for provider keys
-            self.db.query.return_value.filter.return_value.all.return_value = [
+            # Mock the async database execute() pattern for provider keys
+            # Create mock result object
+            mock_result = MagicMock()  # Result object should be sync, not AsyncMock
+            mock_scalars = MagicMock()  # Don't use AsyncMock for scalars object
+            mock_scalars.all.return_value = [
                 self.provider_key_openai,
                 self.provider_key_anthropic,
                 self.provider_key_google,
@@ -153,11 +148,13 @@ class TestProviderService(TestCase):
                 self.provider_key_azure,
                 self.provider_key_bedrock,
             ]
+            mock_result.scalars.return_value = mock_scalars  # scalars() returns sync object
+            self.db.execute = AsyncMock(return_value=mock_result)  # Only execute() is async
 
             self.service = ProviderService(self.user.id, self.db)
 
             # Pre-load the keys for testing
-            self.service._load_provider_keys()
+            await self.service._load_provider_keys_async()
 
     async def test_load_provider_keys(self):
         """Test loading provider keys"""
