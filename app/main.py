@@ -11,6 +11,8 @@ from app.api.routes import (
     api_auth,
     api_keys,
     auth,
+    health,
+    claude_code,
     provider_keys,
     proxy,
     stats,
@@ -67,135 +69,128 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         return response
 
 
-# Get environment
-is_production = os.getenv("ENVIRONMENT", "development").lower() == "production"
+# Exception handlers
+class ForgeExceptionHandler:
+    """Custom exception handlers for Forge-specific errors."""
 
-app = FastAPI(
-    title="Forge API",
-    description="A middleware service for managing AI model provider API keys",
-    version="0.1.0",
-    docs_url="/docs" if not is_production else None,
-    redoc_url="/redoc" if not is_production else None,
-    openapi_url="/openapi.json" if not is_production else None,
-)
+    @staticmethod
+    async def handle_provider_auth_exception(request: Request, exc: ProviderAuthenticationException):
+        logger.warning(f"Provider authentication failed: {exc.detail}")
+        return HTTPException(
+            status_code=exc.status_code,
+            detail=exc.detail,
+            headers=exc.headers or {}
+        )
 
-### Exception handlers block ###
+    @staticmethod
+    async def handle_invalid_provider_exception(request: Request, exc: InvalidProviderException):
+        logger.warning(f"Invalid provider: {exc.detail}")
+        return HTTPException(
+            status_code=exc.status_code,
+            detail=exc.detail,
+            headers=exc.headers or {}
+        )
 
-# Add exception handler for ProviderAuthenticationException
-@app.exception_handler(ProviderAuthenticationException)
-async def provider_authentication_exception_handler(request: Request, exc: ProviderAuthenticationException):
-    return HTTPException(
-        status_code=401,
-        detail=f"Authentication failed for provider {exc.provider_name}"
+    @staticmethod
+    async def handle_base_invalid_provider_setup_exception(request: Request, exc: BaseInvalidProviderSetupException):
+        logger.warning(f"Invalid provider setup: {exc.detail}")
+        return HTTPException(
+            status_code=exc.status_code,
+            detail=exc.detail,
+            headers=exc.headers or {}
+        )
+
+    @staticmethod
+    async def handle_provider_api_exception(request: Request, exc: ProviderAPIException):
+        logger.error(f"Provider API error: {exc.detail}")
+        return HTTPException(
+            status_code=exc.status_code,
+            detail=exc.detail,
+            headers=exc.headers or {}
+        )
+
+    @staticmethod
+    async def handle_base_invalid_request_exception(request: Request, exc: BaseInvalidRequestException):
+        logger.warning(f"Invalid request: {exc.detail}")
+        return HTTPException(
+            status_code=exc.status_code,
+            detail=exc.detail,
+            headers=exc.headers or {}
+        )
+
+    @staticmethod
+    async def handle_base_invalid_forge_key_exception(request: Request, exc: BaseInvalidForgeKeyException):
+        logger.warning(f"Invalid Forge key: {exc.detail}")
+        return HTTPException(
+            status_code=exc.status_code,
+            detail=exc.detail,
+            headers=exc.headers or {}
+        )
+
+
+def create_app() -> FastAPI:
+    """Create and configure the FastAPI application."""
+    app = FastAPI(
+        title="Forge API",
+        description="Unified AI model provider API",
+        version="0.1.0",
+        docs_url="/docs",
+        redoc_url="/redoc",
     )
 
-# Add exception handler for InvalidProviderException
-@app.exception_handler(InvalidProviderException)
-async def invalid_provider_exception_handler(request: Request, exc: InvalidProviderException):
-    return HTTPException(
-        status_code=400,
-        detail=f"{str(exc)}. Please verify your provider and model details by calling the /models endpoint or visiting https://tensorblock.co/api-docs/model-ids, and ensure you’re using a valid provider name, model name, and model ID."
+    # Add CORS middleware
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],  # Configure appropriately for production
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
-# Add exception handler for BaseInvalidProviderSetupException
-@app.exception_handler(BaseInvalidProviderSetupException)
-async def base_invalid_provider_setup_exception_handler(request: Request, exc: BaseInvalidProviderSetupException):
-    return HTTPException(
-        status_code=400,
-        detail=str(exc)
-    )
+    # Add request logging middleware
+    app.add_middleware(RequestLoggingMiddleware)
 
-# Add exception handler for ProviderAPIException
-@app.exception_handler(ProviderAPIException)
-async def provider_api_exception_handler(request: Request, exc: ProviderAPIException):
-    return HTTPException(
-        status_code=exc.error_code,
-        detail=f"Provider API error: {exc.provider_name} {exc.error_code} {exc.error_message}"
-    )
+    # Add exception handlers
+    app.add_exception_handler(ProviderAuthenticationException, ForgeExceptionHandler.handle_provider_auth_exception)
+    app.add_exception_handler(InvalidProviderException, ForgeExceptionHandler.handle_invalid_provider_exception)
+    app.add_exception_handler(BaseInvalidProviderSetupException, ForgeExceptionHandler.handle_base_invalid_provider_setup_exception)
+    app.add_exception_handler(ProviderAPIException, ForgeExceptionHandler.handle_provider_api_exception)
+    app.add_exception_handler(BaseInvalidRequestException, ForgeExceptionHandler.handle_base_invalid_request_exception)
+    app.add_exception_handler(BaseInvalidForgeKeyException, ForgeExceptionHandler.handle_base_invalid_forge_key_exception)
 
-# Add exception handler for BaseInvalidRequestException
-@app.exception_handler(BaseInvalidRequestException)
-async def base_invalid_request_exception_handler(request: Request, exc: BaseInvalidRequestException):
-    return HTTPException(
-        status_code=400,
-        detail=str(exc)
-    )
+    # Include routers
+    v1_router.include_router(auth.router, prefix="/auth", tags=["authentication"])
+    v1_router.include_router(api_auth.router, prefix="/api-auth", tags=["api-authentication"])
+    v1_router.include_router(users.router, prefix="/users", tags=["users"])
+    v1_router.include_router(provider_keys.router, prefix="/provider-keys", tags=["provider-keys"])
+    v1_router.include_router(api_keys.router, prefix="/api-keys", tags=["api-keys"])
+    v1_router.include_router(proxy.router, tags=["proxy"])
+    v1_router.include_router(stats.router, prefix="/stats", tags=["stats"])
+    v1_router.include_router(webhooks.router, prefix="/webhooks", tags=["webhooks"])
+    # Claude Code compatible API endpoints
+    v1_router.include_router(claude_code.router, tags=["Claude Code API"])
 
-# Add exception handler for BaseInvalidForgeKeyException
-@app.exception_handler(BaseInvalidForgeKeyException)
-async def base_invalid_forge_key_exception_handler(request: Request, exc: BaseInvalidForgeKeyException):
-    return HTTPException(
-        status_code=401,
-        detail=f"Invalid Forge key: {exc.error}"
-    )
+    # Health check routes (not versioned)
+    app.include_router(health.router, tags=["health"])
+    
+    # Include v1 router
+    app.include_router(v1_router)
 
-# Add exception handler for NotImplementedError
-@app.exception_handler(NotImplementedError)
-async def not_implemented_error_handler(request: Request, exc: NotImplementedError):
-    return HTTPException(
-        status_code=404,
-        detail=f"Not implemented: {exc}"
-    )
-### Exception handlers block ends ###
+    @app.get("/")
+    async def root():
+        """Root endpoint with API information."""
+        return {
+            "message": "Welcome to Forge API",
+            "version": "0.1.0",
+            "docs": "/docs",
+            "health": "/health"
+        }
 
-
-# Middleware to log slow requests
-@app.middleware("http")
-async def log_latency(request: Request, call_next):
-    start_time = (
-        time.time()
-    )  # Renamed from start to avoid conflict with existing start_time
-    try:
-        response = await call_next(request)
-        return response
-    finally:
-        duration = time.time() - start_time
-        if duration > SLOW_REQUEST_THRESHOLD_SECONDS:  # More than the defined threshold
-            logger.warning(
-                f"[SLOW] {request.method} {request.url.path} took {duration:.2f}s"
-            )
+    return app
 
 
-# Add request logging middleware
-app.add_middleware(RequestLoggingMiddleware)
-
-# Configure CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # For production, specify the actual origins
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Include routers under v1 prefix
-v1_router.include_router(auth.router, prefix="/auth", tags=["Authentication"])
-v1_router.include_router(users.router, prefix="/users", tags=["Users"])
-v1_router.include_router(
-    provider_keys.router, prefix="/provider-keys", tags=["Provider Keys"]
-)
-v1_router.include_router(stats.router, prefix="/stats", tags=["Usage Statistics"])
-v1_router.include_router(webhooks.router, prefix="/webhooks", tags=["Webhooks"])
-v1_router.include_router(api_auth.router, prefix="/api", tags=["Unified API"])
-v1_router.include_router(api_keys.router, prefix="/api-keys", tags=["API Keys"])
-
-# OpenAI-compatible API endpoints
-v1_router.include_router(proxy.router, tags=["OpenAI API"])
-
-# Include v1 router in main app
-app.include_router(v1_router)
-
-
-@app.get("/")
-def read_root():
-    response = {
-        "name": "Forge API",
-        "version": "0.1.0",
-        "description": "A middleware service for managing AI model provider API keys",
-    }
-    if not is_production:
-        response["documentation"] = "/docs"
-    return response
+# Create the application instance
+app = create_app()
 
 
 if __name__ == "__main__":

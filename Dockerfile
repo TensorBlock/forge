@@ -16,6 +16,18 @@ ENV CLERK_API_KEY=${ARG_CLERK_API_KEY}
 ENV CLERK_API_URL=${ARG_CLERK_API_URL:-https://api.clerk.dev/v1}
 ENV FORGE_DEBUG_LOGGING=${ARG_DEBUG_LOGGING}
 
+# Database connection optimization environment variables
+# These settings optimize for PostgreSQL connection limits
+ENV DB_POOL_SIZE=3
+ENV DB_MAX_OVERFLOW=2
+ENV DB_POOL_TIMEOUT=30
+ENV DB_POOL_RECYCLE=1800
+ENV DB_POOL_PRE_PING=true
+
+# Reduced worker count to manage database connections
+# With 5 workers: max 60 connections (5 × 3 × 2 engines + 5 × 2 × 2 overflow = 50 connections)
+ENV WORKERS=5
+
 # Install system dependencies including PostgreSQL client and gosu for user privilege management
 RUN apt-get update && apt-get install -y \
     postgresql-client \
@@ -37,5 +49,5 @@ USER nobody
 # Expose port
 EXPOSE 8000
 
-# Run the application (this command is passed to the entrypoint)
-CMD ["gunicorn", "app.main:app", "-k", "uvicorn.workers.UvicornWorker", "--workers", "10", "--bind", "0.0.0.0:8000"]
+# Use environment variable for workers count and optimize for database connections
+CMD ["sh", "-c", "gunicorn app.main:app -k uvicorn.workers.UvicornWorker --workers ${WORKERS:-5} --bind 0.0.0.0:8000 --timeout 120 --max-requests 1000 --max-requests-jitter 100"]

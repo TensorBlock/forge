@@ -8,10 +8,14 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 
 load_dotenv()
 
-POOL_SIZE = 5
-MAX_OVERFLOW = 10
-MAX_TIMEOUT = 30
-POOL_RECYCLE = 1800
+# Production-optimized connection pool settings
+# With 10 Gunicorn workers, this allows max 60 connections total (10 workers × 3 pool_size × 2 engines)
+# Plus 40 overflow connections (10 workers × 2 max_overflow × 2 engines) = 100 max connections
+POOL_SIZE = int(os.getenv("DB_POOL_SIZE", "3"))  # Reduced from 5 to 3
+MAX_OVERFLOW = int(os.getenv("DB_MAX_OVERFLOW", "2"))  # Reduced from 10 to 2
+MAX_TIMEOUT = int(os.getenv("DB_POOL_TIMEOUT", "30"))
+POOL_RECYCLE = int(os.getenv("DB_POOL_RECYCLE", "1800"))  # 30 minutes
+POOL_PRE_PING = os.getenv("DB_POOL_PRE_PING", "true").lower() == "true"
 
 SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL")
 if not SQLALCHEMY_DATABASE_URL:
@@ -24,6 +28,7 @@ engine = create_engine(
     max_overflow=MAX_OVERFLOW,
     pool_timeout=MAX_TIMEOUT,
     pool_recycle=POOL_RECYCLE,
+    pool_pre_ping=POOL_PRE_PING,  # Enables connection health checks
     echo=False,
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -52,6 +57,7 @@ async_engine = create_async_engine(
     max_overflow=MAX_OVERFLOW,
     pool_timeout=MAX_TIMEOUT,
     pool_recycle=POOL_RECYCLE,
+    pool_pre_ping=POOL_PRE_PING,  # Enables connection health checks
     echo=False,
 )
 
@@ -85,3 +91,25 @@ async def get_db_session():
             raise
         finally:
             await session.close()
+
+
+def get_connection_info():
+    """Get current connection pool information for monitoring"""
+    return {
+        "pool_size": POOL_SIZE,
+        "max_overflow": MAX_OVERFLOW,
+        "pool_timeout": MAX_TIMEOUT,
+        "pool_recycle": POOL_RECYCLE,
+        "sync_engine": {
+            "pool": engine.pool,
+            "checked_out": engine.pool.checkedout(),
+            "checked_in": engine.pool.checkedin(),
+            "size": engine.pool.size(),
+        },
+        "async_engine": {
+            "pool": async_engine.pool,
+            "checked_out": async_engine.pool.checkedout(),
+            "checked_in": async_engine.pool.checkedin(), 
+            "size": async_engine.pool.size(),
+        }
+    }
