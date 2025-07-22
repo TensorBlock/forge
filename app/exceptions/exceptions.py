@@ -42,7 +42,24 @@ class ProviderAPIException(BaseForgeException):
     """Exception raised when a provider API error occurs."""
 
     def __init__(self, provider_name: str, error_code: int, error_message: str):
-        super().__init__(f"Provider {provider_name} API error: {error_code} {error_message}")
+        """Initialize the exception and persist error details for downstream handling.
+
+        Many parts of the codebase (e.g. the Claude Code routes) rely on the
+        presence of the ``error_code`` and ``error_message`` attributes to
+        construct a well-formed error response.  Without setting these instance
+        attributes an ``AttributeError`` is raised when the exception is caught
+        and introspected, masking the original provider failure.  Persisting the
+        values here guarantees that the original error information is available
+        to any error-handling middleware.
+        """
+        self.provider_name = provider_name
+        self.error_code = error_code
+        self.error_message = error_message
+
+        # Compose the base exception message for logging / debugging purposes.
+        super().__init__(
+            f"Provider {provider_name} API error: {error_code} {error_message}"
+        )
 
 
 class BaseInvalidRequestException(BaseForgeException):
