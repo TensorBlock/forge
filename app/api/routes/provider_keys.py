@@ -323,11 +323,11 @@ async def _batch_upsert_provider_keys_internal(
                     await _process_provider_key_delete_data(db, item.provider_name, current_user.id)
                     processed = True
             elif existing_provider_key:  # Update existing key
-                db_key_to_process = await _process_provider_key_update_data(existing_provider_key, ProviderKeyUpdate.model_validate(item))
+                db_key_to_process = await _process_provider_key_update_data(existing_provider_key, ProviderKeyUpdate.model_validate(item.model_dump(exclude_unset=True)))
                 processed_keys.append(db_key_to_process)
                 processed = True
             else:  # Create new key
-                db_key_to_process = await _process_provider_key_create_data(db, ProviderKeyCreate.model_validate(item), current_user.id)
+                db_key_to_process = await _process_provider_key_create_data(db, ProviderKeyCreate.model_validate(item.model_dump(exclude_unset=True)), current_user.id)
                 processed_keys.append(db_key_to_process)
                 processed = True
 
