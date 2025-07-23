@@ -36,6 +36,8 @@ dependencies = [
     "loguru>=0.7.0",
     "aiobotocore~=2.0",
     "tiktoken>=0.5.0",  # for token counting in Claude Code support
+    "google-generativeai>=0.3.0",
+    "google-genai>=0.3.0",
 ]
 
 [project.optional-dependencies]
