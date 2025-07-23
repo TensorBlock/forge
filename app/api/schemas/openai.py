@@ -59,7 +59,7 @@ class OpenAIContentModel(BaseModel):
 
 class ChatMessage(BaseModel):
     role: str
-    content: list[OpenAIContentModel] | str
+    content: list[OpenAIContentModel] | str | None = None
     name: str | None = None
 
 
