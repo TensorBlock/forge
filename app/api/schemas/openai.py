@@ -140,7 +140,7 @@ class ChatCompletionRequest(BaseModel):
     stream: bool | None = False
     stream_options: object | None = None
     temperature: float | None = 1.0
-    tool_choice: str | None = None
+    tool_choice: str | dict[Any, Any] | None = None
     tools: list[Any] | None = None
     top_logprobs: int | None = None
     top_p: float | None = 1.0
