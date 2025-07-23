@@ -1,3 +1,13 @@
+"""DEPRECATED – legacy Google Gemini adapter
+
+This class predates Google’s official OpenAI-compatible endpoint.  All new code
+should use `GeminiOpenAIAdapter` instead (see `gemini_openai_adapter.py`), which
+wraps the same functionality via the standardized REST surface.
+
+`GoogleAdapter` is retained temporarily to avoid breaking existing integrations
+and for reference while migrating any bespoke features that haven’t yet been
+replicated in the new adapter. **It will be removed in a future release.**
+"""
 import asyncio
 import json
 import os
