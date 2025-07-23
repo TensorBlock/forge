@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from app.core.logger import get_logger
 from app.exceptions.exceptions import InvalidCompletionRequestException
@@ -57,10 +57,63 @@ class OpenAIContentModel(BaseModel):
             )
 
 
+# ---------------------------------------------------------------------------
+# OpenAI tool call models (for function calling / tool usage)
+# ---------------------------------------------------------------------------
+
+
+class OpenAIToolCallFunctionModel(BaseModel):
+    """Represents the function part inside a tool call record."""
+
+    name: str
+    # According to the OpenAI specification this is a JSON string, but users often
+    # pass a structured object.  Accept both for leniency.
+    arguments: Any
+
+
+class OpenAIToolCallModel(BaseModel):
+    """Represents a single tool call entry returned by the assistant."""
+
+    id: str
+    type: str
+    function: OpenAIToolCallFunctionModel
+
+
 class ChatMessage(BaseModel):
+    """OpenAI-compatible chat message.
+
+    Forge aims to stay 100 % compatible with the OpenAI Chat Completions API.  We
+    therefore mirror the message schema defined by OpenAI, while being liberal
+    in what we accept so that users can reuse the exact same payloads they send
+    to `api.openai.com`.
+    """
+
     role: str
     content: list[OpenAIContentModel] | str | None = None
     name: str | None = None
+
+    # Fields for function calling / tool usage.  They are optional and ignored
+    # by most providers, but we must parse (and forward) them to remain API-
+    # compatible.
+    tool_calls: list[OpenAIToolCallModel] | None = None
+    tool_call_id: str | None = None
+
+    # Future-proofing: allow any extra keys that OpenAI may introduce without
+    # breaking existing clients.
+    class Config:
+        extra = "allow"
+
+    # ---------------------------------------------------------------------
+    # Validators
+    # ---------------------------------------------------------------------
+
+    @classmethod
+    def _allow_null_content(cls, v):  # noqa: D401, ANN001
+        """Return the value as-is so that **null** is accepted without errors."""
+        return v
+
+    # Pydantic v2
+    _validate_content = field_validator("content", mode="before")(_allow_null_content)
 
 
 class ChatCompletionRequest(BaseModel):
