@@ -80,7 +80,6 @@ class TestAnthropicProvider(TestCase):
                 "messages": [{"role": "user", "content": "Hello, how are you?"}],
                 "max_tokens": 4096,
                 "temperature": 1.0,
-                "stop_sequences": [],
             }
 
     async def test_chat_completion_streaming(self):
@@ -113,6 +112,5 @@ class TestAnthropicProvider(TestCase):
                 "messages": [{"role": "user", "content": "Hello, how are you?"}],
                 "max_tokens": 4096,
                 "temperature": 1.0,
-                "stop_sequences": [],
                 "stream": True,
             }
