@@ -127,8 +127,10 @@ async def handle_anthropic_streaming_response_from_openai_stream(
                             next_anthropic_block_idx += 1
                             openai_tool_idx_to_anthropic_block_idx[openai_tc_idx] = current_anthropic_tool_block_idx
                             
+                            tool_id = tool_delta.get("id") or f"tool_ph_{request_id}_{current_anthropic_tool_block_idx}"
+                            
                             tool_states[current_anthropic_tool_block_idx] = {
-                                "id": tool_delta.get("id") or f"tool_ph_{request_id}_{current_anthropic_tool_block_idx}",
+                                "id": tool_id,
                                 "name": "",
                                 "arguments_buffer": "",
                             }
@@ -154,7 +156,6 @@ async def handle_anthropic_streaming_response_from_openai_stream(
                         if (
                             current_anthropic_tool_block_idx not in sent_tool_block_starts
                             and tool_state["id"]
-                            and not tool_state["id"].startswith("tool_ph_")
                             and tool_state["name"]
                         ):
                             start_tool_event = {
@@ -205,9 +206,12 @@ async def handle_anthropic_streaming_response_from_openai_stream(
         if text_block_anthropic_idx is not None:
             yield f"event: content_block_stop\ndata: {json.dumps({'type': 'content_block_stop', 'index': text_block_anthropic_idx})}\n\n"
         
+        # Collect tool IDs for logging
+        tool_ids = []
         for anthropic_tool_idx in sent_tool_block_starts:
             tool_state_to_finalize = tool_states.get(anthropic_tool_idx)
             if tool_state_to_finalize:
+                tool_ids.append(f"{tool_state_to_finalize.get('name', 'unknown')}:{tool_state_to_finalize.get('id', 'unknown')}")
                 try:
                     json.loads(tool_state_to_finalize["arguments_buffer"])
                 except json.JSONDecodeError:
@@ -255,9 +259,10 @@ async def handle_anthropic_streaming_response_from_openai_stream(
             "input_tokens": estimated_input_tokens,
             "output_tokens": output_token_count,
             "stop_reason": final_anthropic_stop_reason,
+            "tool_ids": tool_ids,
         }
         
         if stream_status_code == 200:
-            logger.info(f"Streaming request completed successfully: {log_data}")
+            logger.info("Streaming request completed successfully", extra={"request_id": request_id, "data": log_data})
         else:
-            logger.error(f"Streaming request failed: {log_data}") 
+            logger.error("Streaming request failed", extra={"request_id": request_id, "data": log_data}) 

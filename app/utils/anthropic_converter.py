@@ -392,7 +392,7 @@ def convert_openai_to_anthropic_response(
 
         # Handle tool calls
         if message.get("tool_calls"):
-            for call in message["tool_calls"]:
+            for i, call in enumerate(message["tool_calls"]):
                 if call.get("type") == "function":
                     tool_input_dict: Dict[str, Any] = {}
                     try:
@@ -408,9 +408,18 @@ def convert_openai_to_anthropic_response(
                         logger.error(f"Failed to parse JSON arguments for tool '{call['function']['name']}': {e}")
                         tool_input_dict = {"error_parsing_arguments": call["function"]["arguments"]}
 
+                    # Handle empty tool ID by generating a placeholder, similar to streaming logic
+                    tool_id = call.get("id")
+                    if not tool_id or tool_id.strip() == "":
+                        tool_id = f"tool_ph_{request_id}_{i}" if request_id else f"tool_ph_{uuid.uuid4().hex}_{i}"
+                        logger.debug(
+                            f"Generated placeholder tool ID '{tool_id}' for tool '{call['function']['name']}' due to empty ID from provider",
+                            extra={"request_id": request_id} if request_id else {}
+                        )
+
                     anthropic_content.append(ContentBlockToolUse(
                         type="tool_use",
-                        id=call["id"],
+                        id=tool_id,
                         name=call["function"]["name"],
                         input=tool_input_dict,
                     ))
