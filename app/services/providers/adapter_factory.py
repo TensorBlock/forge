@@ -14,6 +14,7 @@ from .tensorblock_adapter import TensorblockAdapter
 from .zhipu_adapter import ZhipuAdapter
 from .vertex_adapter import VertexAdapter
 from .gemini_openai_adapter import GeminiOpenAIAdapter
+from .alibaba_adapter import AlibabaAdapter
 
 
 class ProviderAdapterFactory:
@@ -94,7 +95,7 @@ class ProviderAdapterFactory:
         },
         "alibaba": {
             "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-            "adapter": OpenAIAdapter,
+            "adapter": AlibabaAdapter,
         },
         "cerebras": {
             "base_url": "https://api.cerebras.ai/v1",
