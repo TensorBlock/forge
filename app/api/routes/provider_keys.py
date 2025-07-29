@@ -283,7 +283,7 @@ async def delete_provider_key_clerk(
     db: AsyncSession = Depends(get_async_db),
     current_user: UserModel = Depends(get_current_active_user_from_clerk),
 ) -> Any:
-    return await _delete_provider_key_internal(key_id, db, current_user)
+    return await _delete_provider_key_internal(provider_name, db, current_user)
 
 
 # --- Batch Upsert API Endpoint ---
