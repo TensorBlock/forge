@@ -15,6 +15,7 @@ from .zhipu_adapter import ZhipuAdapter
 from .vertex_adapter import VertexAdapter
 from .gemini_openai_adapter import GeminiOpenAIAdapter
 from .alibaba_adapter import AlibabaAdapter
+from .zai_adapter import ZAIAdapter
 
 
 class ProviderAdapterFactory:
@@ -180,6 +181,10 @@ class ProviderAdapterFactory:
         "zhipu": {
             "base_url": "https://open.bigmodel.cn/api/paas/v4",
             "adapter": ZhipuAdapter,
+        },
+        "z.ai": {
+            "base_url": "https://api.z.ai/api/paas/v4",
+            "adapter": ZAIAdapter,
         },
         "azure": {
             "adapter": AzureAdapter,
