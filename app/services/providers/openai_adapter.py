@@ -16,6 +16,7 @@ logger = get_logger(name="openai_adapter")
 
 
 MAX_BATCH_SIZE = 2048
+MAX_TOKENS_PER_BATCH = 8192  # OpenAI's limit for embeddings
 
 
 class OpenAIAdapter(ProviderAdapter):
@@ -55,6 +56,49 @@ class OpenAIAdapter(ProviderAdapter):
         if not isinstance(value, list):
             return [value]
         return value
+
+    def _estimate_tokens(self, text: str) -> int:
+        """Estimate token count for a text string (rough approximation)"""
+        # Rough approximation: 1 token ≈ 4 characters for English text
+        # This is a conservative estimate
+        estimated = len(text) // 4 + 1
+        
+        # Cap at a reasonable maximum to prevent extremely large batches
+        return min(estimated, MAX_TOKENS_PER_BATCH // 2)
+
+    def _create_token_aware_batches(self, inputs: list[str]) -> list[list[str]]:
+        """Create batches based on token count rather than just input count"""
+        batches = []
+        current_batch = []
+        current_token_count = 0
+        
+        for input_text in inputs:
+            estimated_tokens = self._estimate_tokens(input_text)
+            
+            # If a single input exceeds the limit, it needs to be processed alone
+            if estimated_tokens > MAX_TOKENS_PER_BATCH:
+                logger.warning(f"Single input exceeds token limit ({estimated_tokens} tokens), processing alone")
+                if current_batch:
+                    batches.append(current_batch)
+                batches.append([input_text])
+                current_batch = []
+                current_token_count = 0
+                continue
+            
+            # If adding this input would exceed the token limit, start a new batch
+            if current_token_count + estimated_tokens > MAX_TOKENS_PER_BATCH and current_batch:
+                batches.append(current_batch)
+                current_batch = [input_text]
+                current_token_count = estimated_tokens
+            else:
+                current_batch.append(input_text)
+                current_token_count += estimated_tokens
+        
+        # Add the last batch if it has content
+        if current_batch:
+            batches.append(current_batch)
+        
+        return batches
 
     async def list_models(
         self,
@@ -263,9 +307,17 @@ class OpenAIAdapter(ProviderAdapter):
         query_params = query_params or {}
 
         all_embeddings = []
-        for i in range(0, len(payload["input"]), MAX_BATCH_SIZE):
+        total_usage = {"prompt_tokens": 0, "total_tokens": 0}
+        
+        # Create token-aware batches
+        batches = self._create_token_aware_batches(payload["input"])
+        
+        logger.info(f"Created {len(batches)} batches for {len(payload['input'])} inputs")
+        
+        for i, batch_inputs in enumerate(batches):
+            logger.debug(f"Processing batch {i+1}/{len(batches)} with {len(batch_inputs)} inputs")
             batch_payload = payload.copy()
-            batch_payload["input"] = payload["input"][i : i + MAX_BATCH_SIZE]
+            batch_payload["input"] = batch_inputs
 
             async with (
                 aiohttp.ClientSession() as session,
@@ -286,12 +338,17 @@ class OpenAIAdapter(ProviderAdapter):
 
                 response_json = await response.json()
                 all_embeddings.extend(response_json["data"])
+                
+                # Accumulate usage statistics
+                if "usage" in response_json:
+                    total_usage["prompt_tokens"] += response_json["usage"].get("prompt_tokens", 0)
+                    total_usage["total_tokens"] += response_json["usage"].get("total_tokens", 0)
 
         # Combine the results into a single response
         final_response = {
             "object": "list",
             "data": all_embeddings,
             "model": response_json["model"],
-            "usage": response_json["usage"],
+            "usage": total_usage,
         }
         return final_response
