@@ -4,7 +4,7 @@ from typing import Any
 
 import aiohttp
 from app.core.logger import get_logger
-from app.exceptions import (
+from app.exceptions.exceptions import (
     ProviderAPIException,
     BaseInvalidRequestException,
 )
