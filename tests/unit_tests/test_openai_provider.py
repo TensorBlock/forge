@@ -30,6 +30,11 @@ with open(
 ) as f:
     MOCK_CHAT_COMPLETION_STREAMING_RESPONSE_DATA = json.load(f)
 
+with open(
+    os.path.join(CURRENT_DIR, "docs", "openai", "embeddings_response.json"), "r"
+) as f:
+    MOCK_EMBEDDINGS_RESPONSE_DATA = json.load(f)
+
 
 class TestOpenAIProvider(TestCase):
     def setUp(self):
@@ -108,3 +113,20 @@ class TestOpenAIProvider(TestCase):
                 expected_model="gpt-4o-mini-2024-07-18",
                 expected_message=OPENAAI_STANDARD_CHAT_COMPLETION_RESPONSE,
             )
+
+    async def test_process_embeddings(self):
+        payload = {
+            "model": "text-embedding-ada-002",
+            "input": ["hello", "world"],
+        }
+        with patch("aiohttp.ClientSession", ClientSessionMock()) as mock_session:
+            mock_session.responses = [(MOCK_EMBEDDINGS_RESPONSE_DATA, 200)]
+
+            # Call the method
+            result = await self.adapter.process_embeddings(
+                api_key=self.api_key, payload=payload, endpoint="embeddings"
+            )
+            self.assertEqual(result, MOCK_EMBEDDINGS_RESPONSE_DATA)
+
+            # verify that the payload sent to openai has a list as input
+            self.assertIsInstance(mock_session.posted_json[0]["input"], list)
