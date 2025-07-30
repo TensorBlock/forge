@@ -14,17 +14,17 @@ from tests.unit_tests.utils.helpers import (
 
 CURRENT_DIR = os.path.dirname(__file__)
 
-with open(os.path.join(CURRENT_DIR, "docs", "google", "list_models.json"), "r") as f:
+with open(os.path.join(CURRENT_DIR, "assets", "google", "list_models.json"), "r") as f:
     MOCK_LIST_MODELS_RESPONSE_DATA = json.load(f)
 
 with open(
-    os.path.join(CURRENT_DIR, "docs", "google", "chat_completion_response_1.json"), "r"
+    os.path.join(CURRENT_DIR, "assets", "google", "chat_completion_response_1.json"), "r"
 ) as f:
     MOCK_CHAT_COMPLETION_RESPONSE_DATA = json.load(f)
 
 with open(
     os.path.join(
-        CURRENT_DIR, "docs", "google", "chat_completion_streaming_response_1.json"
+        CURRENT_DIR, "assets", "google", "chat_completion_streaming_response_1.json"
     ),
     "r",
 ) as f:
