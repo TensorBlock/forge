@@ -33,6 +33,7 @@ logger.add(
     enqueue=True,
     backtrace=True,
     diagnose=True,
+    serialize=True,  # Process-safe logging
 )
 
 # Export logger instance
