@@ -3,10 +3,8 @@ from typing import Any
 from .azure_adapter import AzureAdapter
 
 TENSORBLOCK_MODELS = [
-    "gpt-4.1",
     "gpt-4.1-mini",
     "gpt-4.1-nano",
-    "gpt-4o",
     "gpt-4o-mini",
     "o3-mini",
     "text-embedding-3-large",

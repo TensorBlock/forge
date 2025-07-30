@@ -1,0 +1,20 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "object": "embedding",
+      "index": 0,
+      "embedding": [
+        -0.006929283495992422,
+        -0.005336422007530928,
+        -4.547132266452536e-05,
+        -0.024047503247857094
+      ]
+    }
+  ],
+  "model": "text-embedding-ada-002",
+  "usage": {
+    "prompt_tokens": 8,
+    "total_tokens": 8
+  }
+} 
