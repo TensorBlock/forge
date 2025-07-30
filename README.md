@@ -33,13 +33,10 @@
 Forge is an open-source middleware service that simplifies AI model provider management. It allows you to use multiple AI providers (OpenAI, Anthropic, etc.) through a single, unified API. By storing your provider API keys securely, Forge generates a unified key that works across all your AI applications.
 
 ![Product Poster](assets/service.jpg)
-<div align="center">
-  <p>
-    We have deployed Forge as an online service, feel free to
-    <a href="https://tensorblock.co/forge"><strong>✨ learn the service</strong></a> and
-    <a href="https://forge.tensorblock.co"><strong>🚀 try it now</strong></a>.
-  </p>
-</div>
+
+**News**
+- We have deployed Forge as an online service, feel free to [✨ learn the service](https://tensorblock.co/forge) and [🚀 try it now](https://forge.tensorblock.co)
+- Forge now enables [Claude Code to work with any LLM](https://github.com/TensorBlock/claude-code-forge)
 
 **Why Forge?**
 - **Unified Experience**: Use multiple AI models through a single, consistent API
