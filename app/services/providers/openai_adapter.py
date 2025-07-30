@@ -4,12 +4,18 @@ from typing import Any
 
 import aiohttp
 from app.core.logger import get_logger
-from app.exceptions.exceptions import ProviderAPIException, BaseInvalidRequestException
+from app.exceptions import (
+    ProviderAPIException,
+    BaseInvalidRequestException,
+)
 
 from .base import ProviderAdapter
 
 # Configure logging
 logger = get_logger(name="openai_adapter")
+
+
+MAX_BATCH_SIZE = 2048
 
 
 class OpenAIAdapter(ProviderAdapter):
@@ -256,21 +262,36 @@ class OpenAIAdapter(ProviderAdapter):
         url = f"{base_url or self._base_url}/{endpoint}"
         query_params = query_params or {}
 
-        async with (
-            aiohttp.ClientSession() as session,
-            session.post(
-                url, headers=headers, json=payload, params=query_params
-            ) as response,
-        ):
-            if response.status != HTTPStatus.OK:
-                error_text = await response.text()
-                logger.error(
-                    f"Embeddings API error for {self.provider_name}: {error_text}"
-                )
-                raise ProviderAPIException(
-                    provider_name=self.provider_name,
-                    error_code=response.status,
-                    error_message=error_text,
-                )
+        all_embeddings = []
+        for i in range(0, len(payload["input"]), MAX_BATCH_SIZE):
+            batch_payload = payload.copy()
+            batch_payload["input"] = payload["input"][i : i + MAX_BATCH_SIZE]
 
-            return await response.json()
+            async with (
+                aiohttp.ClientSession() as session,
+                session.post(
+                    url, headers=headers, json=batch_payload, params=query_params
+                ) as response,
+            ):
+                if response.status != HTTPStatus.OK:
+                    error_text = await response.text()
+                    logger.error(
+                        f"Embeddings API error for {self.provider_name}: {error_text}"
+                    )
+                    raise ProviderAPIException(
+                        provider_name=self.provider_name,
+                        error_code=response.status,
+                        error_message=error_text,
+                    )
+
+                response_json = await response.json()
+                all_embeddings.extend(response_json["data"])
+
+        # Combine the results into a single response
+        final_response = {
+            "object": "list",
+            "data": all_embeddings,
+            "model": response_json["model"],
+            "usage": response_json["usage"],
+        }
+        return final_response
