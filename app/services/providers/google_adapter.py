@@ -309,7 +309,6 @@ class GoogleAdapter(ProviderAdapter):
         yield f"data: {json.dumps(initial_chunk)}\n\n".encode()
 
         request_id = f"chatcmpl-{uuid.uuid4()}"
-        final_usage_data = None  # Store usage info when found
 
         try:
             if not google_payload:
@@ -347,6 +346,7 @@ class GoogleAdapter(ProviderAdapter):
                     )
 
                 # Process response in chunks
+                # https://ai.google.dev/api/generate-content#v1beta.GenerateContentResponse
                 buffer = ""
                 async for chunk in response.content.iter_chunks():
                     if not chunk[0]:  # Empty chunk
@@ -358,6 +358,14 @@ class GoogleAdapter(ProviderAdapter):
                     while True:
                         try:
                             # Find the start of a JSON object
+                            usage_data = None
+                            openai_chunk = {
+                                "id": request_id,
+                                "object": "chat.completion.chunk",
+                                "created": int(time.time()),
+                                "model": model,
+                                "choices": [{"index": 0, "delta": {"content": ""}}],
+                            }
                             start_idx = buffer.find("{")
                             if start_idx == -1:
                                 break
@@ -369,11 +377,12 @@ class GoogleAdapter(ProviderAdapter):
 
                             # Process the JSON object
                             if "usageMetadata" in json_obj:
-                                final_usage_data = self._format_google_usage(
+                                usage_data = self.format_google_usage(
                                     json_obj["usageMetadata"]
                                 )
 
                             if "candidates" in json_obj:
+                                choices = []
                                 for c_idx, candidate in enumerate(
                                     json_obj.get("candidates", [])
                                 ):
@@ -384,42 +393,26 @@ class GoogleAdapter(ProviderAdapter):
                                     )
                                     finish_reason = candidate.get("finishReason")
 
-                                    if text_content:
-                                        chunk = {
-                                            "id": request_id,
-                                            "object": "chat.completion.chunk",
-                                            "created": int(time.time()),
-                                            "model": model,
-                                            "choices": [
-                                                {
-                                                    "index": c_idx,
-                                                    "delta": {"content": text_content},
-                                                    "finish_reason": finish_reason.lower()
-                                                    if finish_reason
-                                                    else None,
-                                                }
-                                            ],
-                                        }
-                                        yield f"data: {json.dumps(chunk)}\n\n".encode()
-                                        await asyncio.sleep(
-                                            0.05
-                                        )  # Small delay to prevent overwhelming the client
+                                    choices.append({
+                                        "index": c_idx,
+                                        "delta": {"content": text_content},
+                                        **({"finish_reason": finish_reason.lower()
+                                        if finish_reason
+                                        else {}})
+                                    })
+                                if not choices:
+                                    choices = [{"index": 0, "delta": {"content": ""}}]
+
+                                openai_chunk["choices"] = choices
+
+                            if usage_data:
+                                openai_chunk["usage"] = usage_data
+
+                            yield f"data: {json.dumps(openai_chunk)}\n\n".encode()
 
                         except json.JSONDecodeError:
                             # Incomplete JSON, wait for more data
                             break
-
-            # Yield final usage chunk if data was found
-            if final_usage_data:
-                usage_chunk = {
-                    "id": request_id,
-                    "object": "chat.completion.chunk",
-                    "created": int(time.time()),
-                    "model": model,
-                    "choices": [{"index": 0, "delta": {}}],
-                    "usage": final_usage_data,
-                }
-                yield f"data: {json.dumps(usage_chunk)}\n\n".encode()
 
             # Send final [DONE] message
             yield b"data: [DONE]\n\n"
@@ -437,18 +430,21 @@ class GoogleAdapter(ProviderAdapter):
             yield f"data: {json.dumps(error_chunk)}\n\n".encode()
             yield b"data: [DONE]\n\n"
 
-    def _format_google_usage(self, metadata: dict) -> dict:
+    @staticmethod
+    def format_google_usage(metadata: dict) -> dict:
         """Format Google usage metadata to OpenAI format"""
         if not metadata:
             return None
         prompt_tokens = metadata.get("promptTokenCount", 0)
         completion_tokens = metadata.get("candidatesTokenCount", 0)
+        cached_tokens = metadata.get("cachedContentTokenCount", 0)
+        reasoning_tokens = metadata.get("thoughtsTokenCount", 0)
         return {
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
-            "total_tokens": metadata.get(
-                "totalTokenCount", prompt_tokens + completion_tokens
-            ),
+            "total_tokens": prompt_tokens + completion_tokens,
+            "prompt_tokens_details": {"cached_tokens": cached_tokens},
+            "completion_tokens_details": {"reasoning_tokens": reasoning_tokens},
         }
 
     @staticmethod
@@ -558,13 +554,14 @@ class GoogleAdapter(ProviderAdapter):
         google_response: dict[str, Any], model: str
     ) -> dict[str, Any]:
         """Convert Google completion response format to OpenAI format"""
+        # https://ai.google.dev/api/generate-content#v1beta.GenerateContentResponse
         openai_response = {
             "id": f"chatcmpl-{uuid.uuid4()}",
             "object": "chat.completion",
             "created": int(time.time()),
             "model": model,
             "choices": [],
-            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "prompt_tokens_details": {"cached_tokens": 0}, "completion_tokens_details": {"reasoning_tokens": 0}},
         }
 
         # Extract the candidates
@@ -606,16 +603,9 @@ class GoogleAdapter(ProviderAdapter):
             )
 
         # Set usage estimates if available
-        usage_metadata = google_response.get("usageMetadata", {})
-        if usage_metadata:
-            prompt_tokens = usage_metadata.get("promptTokenCount", 0)
-            completion_tokens = usage_metadata.get("candidatesTokenCount", 0)
-
-            openai_response["usage"] = {
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": prompt_tokens + completion_tokens,
-            }
+        usage_data = GoogleAdapter.format_google_usage(google_response.get("usageMetadata"))
+        if usage_data:
+            openai_response["usage"] = usage_data
 
         return openai_response
     

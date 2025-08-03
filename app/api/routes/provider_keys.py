@@ -1,10 +1,9 @@
-import json
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from starlette import status
 
 from app.api.dependencies import (
     get_current_active_user,
@@ -16,10 +15,11 @@ from app.api.schemas.provider_key import (
     ProviderKeyUpdate,
     ProviderKeyUpsertItem,
 )
-from app.core.async_cache import invalidate_provider_service_cache_async
+from app.core.async_cache import invalidate_provider_service_cache_async, invalidate_forge_scope_cache_async
 from app.core.database import get_async_db
 from app.core.logger import get_logger
 from app.core.security import decrypt_api_key, encrypt_api_key
+from app.models.forge_api_key import forge_api_key_provider_scope_association
 from app.models.provider_key import ProviderKey as ProviderKeyModel
 from app.models.user import User as UserModel
 from app.services.providers.adapter_factory import ProviderAdapterFactory
@@ -56,7 +56,7 @@ async def _get_provider_keys_internal(
     Internal logic to get all provider keys for the current user.
     """
     result = await db.execute(
-        select(ProviderKeyModel).filter(ProviderKeyModel.user_id == current_user.id)
+        select(ProviderKeyModel).filter(ProviderKeyModel.user_id == current_user.id, ProviderKeyModel.deleted_at == None)
     )
     provider_keys = result.scalars().all()
     return [ProviderKey.model_validate(pk) for pk in provider_keys]
@@ -94,6 +94,7 @@ async def _create_provider_key_internal(
         select(ProviderKeyModel).filter(
             ProviderKeyModel.user_id == current_user.id,
             ProviderKeyModel.provider_name == provider_key_create.provider_name,
+            ProviderKeyModel.deleted_at == None,
         )
     )
     existing_key = result.scalar_one_or_none()
@@ -148,6 +149,7 @@ async def _update_provider_key_internal(
         select(ProviderKeyModel).filter(
             ProviderKeyModel.provider_name == provider_name,
             ProviderKeyModel.user_id == current_user.id,
+            ProviderKeyModel.deleted_at == None,
         )
     )
     db_provider_key = result.scalar_one_or_none()
@@ -175,6 +177,7 @@ async def _process_provider_key_delete_data(
         select(ProviderKeyModel).filter(
             ProviderKeyModel.provider_name == provider_name,
             ProviderKeyModel.user_id == user_id,
+            ProviderKeyModel.deleted_at == None,
         )
     )
     db_provider_key = result.scalar_one_or_none()
@@ -185,9 +188,19 @@ async def _process_provider_key_delete_data(
     # Store the provider key data before deletion
     provider_key_data = ProviderKey.model_validate(db_provider_key)
 
-    await db.delete(db_provider_key)
+    # do soft deletiong here. Set the deleted_at column to the current time and set encrypted_api_key to None
+    db_provider_key.deleted_at = datetime.now(UTC)
+    db_provider_key.encrypted_api_key = None
+    
+    # Delete the record from forge_api_key_provider_scope_association where provider_key_id matches current id
+    await db.execute(
+        delete(forge_api_key_provider_scope_association).where(
+            forge_api_key_provider_scope_association.c.provider_key_id == db_provider_key.id,
+        )
+    )
+    scoped_forge_api_keys = db_provider_key.scoped_forge_api_keys
 
-    return provider_key_data
+    return provider_key_data, [scoped_forge_api_key.key for scoped_forge_api_key in scoped_forge_api_keys]
 
 
 async def _delete_provider_key_internal(
@@ -196,11 +209,13 @@ async def _delete_provider_key_internal(
     """
     Internal logic to delete a provider key for the current user.
     """
-    provider_key_data = await _process_provider_key_delete_data(db, provider_name, current_user.id)
+    provider_key_data, scoped_forge_api_keys = await _process_provider_key_delete_data(db, provider_name, current_user.id)
     await db.commit()
 
     # Invalidate caches after deleting a provider key
     await invalidate_provider_service_cache_async(current_user.id)
+    for scoped_forge_api_key in scoped_forge_api_keys:
+        await invalidate_forge_scope_cache_async(scoped_forge_api_key)
 
     return provider_key_data
 
@@ -302,13 +317,14 @@ async def _batch_upsert_provider_keys_internal(
 
     # 1. Fetch all existing keys for the user
     result = await db.execute(
-        select(ProviderKeyModel).filter(ProviderKeyModel.user_id == current_user.id)
+        select(ProviderKeyModel).filter(ProviderKeyModel.user_id == current_user.id, ProviderKeyModel.deleted_at == None)
     )
     existing_keys_query = result.scalars().all()
     # 2. Map them by provider_name for efficient lookup
     existing_keys_map: dict[str, ProviderKeyModel] = {
         key.provider_name: key for key in existing_keys_query
     }
+    invalidated_forge_api_keys = set()
 
     for item in items:
         if "****" in item.api_key:
@@ -320,7 +336,8 @@ async def _batch_upsert_provider_keys_internal(
             # Handle deletion if api_key is "DELETE"
             if item.api_key == "DELETE":
                 if existing_provider_key:
-                    await _process_provider_key_delete_data(db, item.provider_name, current_user.id)
+                    _, scoped_forge_api_keys = await _process_provider_key_delete_data(db, item.provider_name, current_user.id)
+                    invalidated_forge_api_keys.update(scoped_forge_api_keys)
                     processed = True
             elif existing_provider_key:  # Update existing key
                 db_key_to_process = await _process_provider_key_update_data(existing_provider_key, ProviderKeyUpdate.model_validate(item.model_dump(exclude_unset=True)))
@@ -357,6 +374,8 @@ async def _batch_upsert_provider_keys_internal(
                 await db.refresh(key)  # Refresh each key to get DB-generated values like id, timestamps
             processed_keys = [ProviderKey.model_validate(key) for key in processed_keys]
             await invalidate_provider_service_cache_async(current_user.id)
+            for key in invalidated_forge_api_keys:
+                await invalidate_forge_scope_cache_async(key)
         except Exception as e:
             await db.rollback()
             error_message_prefix = "Error during final commit/refresh in batch upsert"

@@ -30,7 +30,7 @@ class ForgeApiKey(Base):
     __tablename__ = "forge_api_keys"
 
     id = Column(Integer, primary_key=True, index=True)
-    key = Column(String, unique=True, index=True, nullable=False)
+    key = Column(String, unique=True, index=True, nullable=True)
     name = Column(String, nullable=True)  # Optional name/description for the key
     user_id = Column(
         Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
@@ -38,6 +38,7 @@ class ForgeApiKey(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     last_used_at = Column(DateTime, nullable=True)
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
 
     # Relationship to user
     user = relationship("User", back_populates="api_keys")

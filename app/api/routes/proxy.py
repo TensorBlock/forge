@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from starlette.responses import StreamingResponse
 
-from app.api.dependencies import get_user_by_api_key
+from app.api.dependencies import get_user_by_api_key, get_user_details_by_api_key
 from app.api.schemas.openai import (
     ChatCompletionRequest,
     CompletionRequest,
@@ -16,7 +16,7 @@ from app.api.schemas.openai import (
     ImageEditsRequest,
     ImageGenerationRequest,
 )
-from app.core.async_cache import async_provider_service_cache
+from app.core.async_cache import forge_scope_cache_async, get_forge_scope_cache_async
 from app.core.database import get_async_db
 from app.core.logger import get_logger
 from app.models.forge_api_key import ForgeApiKey
@@ -46,13 +46,13 @@ async def _get_allowed_provider_names(
     if allowed is not None:
         return allowed
 
-    allowed = await async_provider_service_cache.get(f"forge_scope:{api_key}")
+    allowed = await get_forge_scope_cache_async(api_key)
 
     if allowed is None:
         result = await db.execute(
             select(ForgeApiKey)
             .options(selectinload(ForgeApiKey.allowed_provider_keys))
-            .filter(ForgeApiKey.key == f"forge-{api_key}", ForgeApiKey.is_active)
+            .filter(ForgeApiKey.key == f"forge-{api_key}", ForgeApiKey.is_active, ForgeApiKey.deleted_at == None)
         )
         forge_key = result.scalar_one_or_none()
         if forge_key is None:
@@ -60,9 +60,7 @@ async def _get_allowed_provider_names(
                 status_code=401, detail="Forge API key not found or inactive"
             )
         allowed = [pk.provider_name for pk in forge_key.allowed_provider_keys]
-        await async_provider_service_cache.set(
-            f"forge_scope:{api_key}", allowed, ttl=300
-        )
+        await forge_scope_cache_async(api_key, allowed)
 
     request.state.allowed_provider_names = allowed
     return allowed
@@ -72,7 +70,7 @@ async def _get_allowed_provider_names(
 async def create_chat_completion(
     request: Request,
     chat_request: ChatCompletionRequest,
-    user: User = Depends(get_user_by_api_key),
+    user_details: dict[str, Any] = Depends(get_user_details_by_api_key),
     db: AsyncSession = Depends(get_async_db),
 ) -> Any:
     """
@@ -80,7 +78,9 @@ async def create_chat_completion(
     """
     try:
         # Get cached provider service instance
-        provider_service = await ProviderService.async_get_instance(user, db)
+        user = user_details["user"]
+        api_key_id = user_details["api_key_id"]
+        provider_service = await ProviderService.async_get_instance(user, db, api_key_id=api_key_id)
 
         # Convert to dict and extract request properties
         payload = chat_request.dict(exclude_unset=True)
@@ -110,8 +110,10 @@ async def create_chat_completion(
         # Otherwise, return the JSON response directly
         return response
     except ValueError as err:
+        logger.exception(f"Error processing chat completion request: {str(err)}")
         raise HTTPException(status_code=400, detail=str(err)) from err
     except Exception as err:
+        logger.exception(f"Error processing chat completion request: {str(err)}")
         raise HTTPException(
             status_code=500, detail=f"Error processing request: {str(err)}"
         ) from err
@@ -121,14 +123,16 @@ async def create_chat_completion(
 async def create_completion(
     request: Request,
     completion_request: CompletionRequest,
-    user: User = Depends(get_user_by_api_key),
+    user_details: dict[str, Any] = Depends(get_user_details_by_api_key),
     db: AsyncSession = Depends(get_async_db),
 ) -> Any:
     """
     Create a completion (OpenAI-compatible endpoint).
     """
     try:
-        provider_service = await ProviderService.async_get_instance(user, db)
+        user = user_details["user"]
+        api_key_id = user_details["api_key_id"]
+        provider_service = await ProviderService.async_get_instance(user, db, api_key_id=api_key_id)
         allowed_provider_names = await _get_allowed_provider_names(request, db)
 
         response = await provider_service.process_request(
@@ -153,8 +157,10 @@ async def create_completion(
         # Otherwise, return the JSON response directly
         return response
     except ValueError as err:
+        logger.exception(f"Error processing completion request: {str(err)}")
         raise HTTPException(status_code=400, detail=str(err)) from err
     except Exception as err:
+        logger.exception(f"Error processing completion request: {str(err)}")
         raise HTTPException(
             status_code=500, detail=f"Error processing request: {str(err)}"
         ) from err
@@ -164,14 +170,16 @@ async def create_completion(
 async def create_image_generation(
     request: Request,
     image_generation_request: ImageGenerationRequest,
-    user: User = Depends(get_user_by_api_key),
+    user_details: dict[str, Any] = Depends(get_user_details_by_api_key),
     db: AsyncSession = Depends(get_async_db),
 ) -> Any:
     """
     Create an image generation (OpenAI-compatible endpoint).
     """
     try:
-        provider_service = await ProviderService.async_get_instance(user, db)
+        user = user_details["user"]
+        api_key_id = user_details["api_key_id"]
+        provider_service = await ProviderService.async_get_instance(user, db, api_key_id=api_key_id)
 
         payload = image_generation_request.model_dump(mode="json", exclude_unset=True)
 
@@ -195,11 +203,13 @@ async def create_image_generation(
 async def create_image_edits(
     request: Request,
     image_edits_request: ImageEditsRequest,
-    user: User = Depends(get_user_by_api_key),
+    user_details: dict[str, Any] = Depends(get_user_details_by_api_key),
     db: AsyncSession = Depends(get_async_db),
 ) -> Any:
     try:
-        provider_service = await ProviderService.async_get_instance(user, db)
+        user = user_details["user"]
+        api_key_id = user_details["api_key_id"]
+        provider_service = await ProviderService.async_get_instance(user, db, api_key_id=api_key_id)
         payload = image_edits_request.model_dump(mode="json", exclude_unset=True)
         allowed_provider_names = await _get_allowed_provider_names(request, db)
         response = await provider_service.process_request(
@@ -236,7 +246,7 @@ async def list_models(
         )
         return {"object": "list", "data": models}
     except Exception as err:
-        logger.error(f"Error listing models: {str(err)}")
+        logger.exception(f"Error listing models: {str(err)}")
         raise HTTPException(
             status_code=500, detail=f"Error listing models: {str(err)}"
         ) from err
@@ -247,14 +257,16 @@ async def list_models(
 async def create_embeddings(
     request: Request,
     embeddings_request: EmbeddingsRequest,
-    user: User = Depends(get_user_by_api_key),
+    user_details: dict[str, Any] = Depends(get_user_details_by_api_key),
     db: AsyncSession = Depends(get_async_db),
 ) -> Any:
     """
     Create embeddings (OpenAI-compatible endpoint).
     """
     try:
-        provider_service = await ProviderService.async_get_instance(user, db)
+        user = user_details["user"]
+        api_key_id = user_details["api_key_id"]
+        provider_service = await ProviderService.async_get_instance(user, db, api_key_id=api_key_id)
         payload = embeddings_request.model_dump(mode="json", exclude_unset=True)
         allowed_provider_names = await _get_allowed_provider_names(request, db)
         response = await provider_service.process_request(

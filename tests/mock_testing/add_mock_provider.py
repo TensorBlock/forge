@@ -44,7 +44,7 @@ async def setup_mock_provider(username: str, force: bool = False):
                 return False
 
             # Check if the mock provider already exists for this user
-            result = await db.execute(select(ProviderKey).filter(ProviderKey.user_id == user.id, ProviderKey.provider_name == "mock"))
+            result = await db.execute(select(ProviderKey).filter(ProviderKey.user_id == user.id, ProviderKey.provider_name == "mock", ProviderKey.deleted_at == None))
             existing_provider = result.scalar_one_or_none()
 
             if existing_provider and not force:

@@ -111,7 +111,22 @@ class BedrockAdapter(ProviderAdapter):
             "aws_access_key_id": config["aws_access_key_id"][:3] + mask_str + config["aws_access_key_id"][-3:],
             "aws_secret_access_key": config["aws_secret_access_key"][:3] + mask_str + config["aws_secret_access_key"][-3:],
         }
-
+    
+    @staticmethod
+    def format_bedrock_usage(usage_data: dict[str, Any]) -> dict[str, Any]:
+        """Format Bedrock usage data to OpenAI format"""
+        if not usage_data:
+            return None
+        input_tokens = usage_data.get("inputTokens", 0)
+        output_tokens = usage_data.get("outputTokens", 0)
+        total_tokens = usage_data.get("totalTokens", 0) or (input_tokens + output_tokens)
+        cached_tokens = usage_data.get("cacheReadInputTokens", 0) + usage_data.get("cacheWriteInputTokens", 0)
+        return {
+            "prompt_tokens": input_tokens,
+            "completion_tokens": output_tokens,
+            "total_tokens": total_tokens,
+            "prompt_tokens_details": {"cached_tokens": cached_tokens},
+        }
 
     async def list_models(self, api_key: str) -> list[str]:
         """List all models (verbosely) supported by the provider"""
@@ -305,9 +320,7 @@ class BedrockAdapter(ProviderAdapter):
                                 error_message=error_text
                             )
                 
-                input_tokens = response.get("usage", {}).get("inputTokens", 0)
-                output_tokens = response.get("usage", {}).get("outputTokens", 0)
-                total_tokens = response.get("usage", {}).get("totalTokens", 0)
+                usage_data = self.format_bedrock_usage(response.get("usage", {}))
 
                 finish_reason = response.get("stopReason", "end_turn")
                 finish_reason = self.BEDROCK_FINISH_REASONS_MAPPING.get(finish_reason, "stop")
@@ -327,16 +340,12 @@ class BedrockAdapter(ProviderAdapter):
                             "finish_reason": finish_reason,
                         }
                     ],
-                    "usage": {
-                        "prompt_tokens": input_tokens,
-                        "completion_tokens": output_tokens,
-                        "total_tokens": total_tokens or (input_tokens + output_tokens),
-                    },
+                    **({"usage": usage_data} if usage_data else {}),
                 }
     
     async def _process_streaming_response(self, bedrock_payload: dict[str, Any]) -> AsyncGenerator[bytes, None]:
         """Process a streaming response from Bedrock API"""
-        final_usage_data = None
+        # https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/bedrock-runtime/client/converse_stream.html
         finish_reason = None
         request_id = f"chatcmpl-{uuid.uuid4()}"
         created = int(time.time())
@@ -350,6 +359,7 @@ class BedrockAdapter(ProviderAdapter):
                     async for event in response["stream"]:
                         # only one key in each event
                         openai_chunk = None
+                        usage_data = None
                         if "messageStart" in event:
                             role = event["messageStart"].get("role", "assistant")
                             openai_chunk = {
@@ -416,17 +426,11 @@ class BedrockAdapter(ProviderAdapter):
                                 ],
                             }
                         elif "metadata" in event:
-                            usage = event["metadata"].get('usage')
-                            if usage:
-                                input_tokens = usage.get("inputTokens", 0)
-                                output_tokens = usage.get("outputTokens", 0)
-                                total_tokens = usage.get("totalTokens", 0) or (input_tokens + output_tokens)
-                                final_usage_data = {
-                                    "prompt_tokens": input_tokens,
-                                    "completion_tokens": output_tokens,
-                                    "total_tokens": total_tokens,
-                                }
+                            usage_data = self.format_bedrock_usage(event["metadata"].get('usage'))
+                        
                         if openai_chunk:
+                            if usage_data:
+                                openai_chunk["usage"] = usage_data
                             yield f"data: {json.dumps(openai_chunk)}\n\n".encode()
                 except Exception as e:
                     error_text = f"Streaming completion API error for {self.provider_name}: {e}"
@@ -436,19 +440,6 @@ class BedrockAdapter(ProviderAdapter):
                         error_code=400,
                         error_message=error_text
                     )
-                if final_usage_data:
-                    openai_chunk = {
-                        "id": request_id,
-                        "object": "chat.completion.chunk",
-                        "created": created,
-                        "model": bedrock_payload["modelId"],
-                        "choices": [{
-                            "index": 0,
-                            "delta": {},
-                        }],
-                        "usage": final_usage_data,
-                    }
-                    yield f"data: {json.dumps(openai_chunk)}\n\n".encode()
 
             # Send final [DONE] message
             yield b"data: [DONE]\n\n"

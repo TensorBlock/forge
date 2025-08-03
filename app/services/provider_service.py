@@ -1,4 +1,5 @@
 import asyncio
+import uuid
 import inspect
 import json
 import os
@@ -18,12 +19,29 @@ from app.services.usage_stats_service import UsageStatsService
 
 from .providers.adapter_factory import ProviderAdapterFactory
 from .providers.base import ProviderAdapter
+from .providers.usage_tracker_service import UsageTrackerService
 
 logger = get_logger(name="provider_service")
 
 # Add constants at the top of the file, after imports
 MODEL_PARTS_MIN_LENGTH = 2  # Minimum number of parts in a model name (e.g., "gpt-4")
 
+# Create a background task to update the usage tracker that won't be cancelled
+# Even if the streaming response is cancelled by client disconnect
+async def update_usage_in_background(usage_tracker_id: uuid.UUID, input_tokens: int, output_tokens: int, cached_tokens: int, reasoning_tokens: int):
+    # Use a fresh DB session for logging, since the original request session
+    # may have been closed by FastAPI after the response was returned.
+    from app.core.database import get_db_session
+
+    async with get_db_session() as new_db_session:
+        await UsageTrackerService.update_usage_tracker(
+            db=new_db_session,
+            usage_tracker_id=usage_tracker_id,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cached_tokens=cached_tokens,
+            reasoning_tokens=reasoning_tokens,
+        )
 
 class ProviderService:
     """Service for handling provider API calls.
@@ -59,18 +77,18 @@ class ProviderService:
         # Using a stable namespace makes invalidation easier
         return f"models:{provider_name}:{cache_key}"
 
-    def __init__(self, user_id: int, db: AsyncSession):
+    def __init__(self, user_id: int, db: AsyncSession, api_key_id: int | None = None):
         self.user_id = user_id
         self.db = db
+        self.api_key_id = api_key_id
         self.provider_keys: dict[str, dict[str, Any]] = {}
         self.adapters = self._get_adapters()
         # Load provider keys on demand, not during initialization
         self._keys_loaded = False
 
     @classmethod
-    async def async_get_instance(cls, user: User, db: AsyncSession) -> "ProviderService":
+    async def async_get_instance(cls, user: User, db: AsyncSession, api_key_id: int | None = None) -> "ProviderService":
         """Get a cached instance of ProviderService for a user or create a new one (async version)"""
-        from app.core.async_cache import async_provider_service_cache
 
         cache_key = f"provider_service:{user.id}"
         cached_instance = await async_provider_service_cache.get(cache_key)
@@ -81,6 +99,7 @@ class ProviderService:
                 )
             # Update the db session reference for the cached instance
             cached_instance.db = db
+            cached_instance.api_key_id = api_key_id
             return cached_instance
 
         # No cached instance found, create a new one (async)
@@ -88,7 +107,7 @@ class ProviderService:
             logger.debug(
                 f"Creating new ProviderService instance for user {user.id} (async)"
             )
-        instance = cls(user.id, db)
+        instance = cls(user.id, db, api_key_id)
         await async_provider_service_cache.set(cache_key, instance)
         return instance
 
@@ -164,7 +183,7 @@ class ProviderService:
         # Query ProviderKey directly by user_id
         from app.models.provider_key import ProviderKey
 
-        result = await self.db.execute(select(ProviderKey).filter(ProviderKey.user_id == self.user_id))
+        result = await self.db.execute(select(ProviderKey).filter(ProviderKey.user_id == self.user_id, ProviderKey.deleted_at == None))
         provider_key_records  = result.scalars().all()
 
         keys = {}
@@ -172,6 +191,7 @@ class ProviderService:
             model_mapping = provider_key.model_mapping or {}
 
             keys[provider_key.provider_name] = {
+                "id": provider_key.id,
                 "api_key": decrypt_api_key(provider_key.encrypted_api_key),
                 "base_url": provider_key.base_url,
                 "model_mapping": model_mapping,
@@ -195,8 +215,6 @@ class ProviderService:
             return self.provider_keys
 
         # Try to get provider keys from cache
-        from app.core.async_cache import async_provider_service_cache
-
         cache_key = f"provider_keys:{self.user_id}"
         cached_keys = await async_provider_service_cache.get(cache_key)
         if cached_keys is not None:
@@ -216,7 +234,7 @@ class ProviderService:
         # Query ProviderKey directly by user_id
         from app.models.provider_key import ProviderKey
 
-        result = await self.db.execute(select(ProviderKey).filter(ProviderKey.user_id == self.user_id))
+        result = await self.db.execute(select(ProviderKey).filter(ProviderKey.user_id == self.user_id, ProviderKey.deleted_at == None))
         provider_key_records = result.scalars().all()
 
         keys = {}
@@ -224,6 +242,7 @@ class ProviderService:
             model_mapping = provider_key.model_mapping or {}
 
             keys[provider_key.provider_name] = {
+                "id": provider_key.id,
                 "api_key": decrypt_api_key(provider_key.encrypted_api_key),
                 "base_url": provider_key.base_url,
                 "model_mapping": model_mapping,
@@ -286,11 +305,13 @@ class ProviderService:
         provider_data = self.provider_keys[matching_provider]
 
         model_mapping = provider_data.get("model_mapping", {})
+        provider_key_id = provider_data.get("id")
         mapped_model = model_mapping.get(model_name, model_name)
         return (
             matching_provider,
             mapped_model,
             provider_data.get("base_url"),
+            provider_key_id,
         )
 
     def _find_provider_for_unprefixed_model(
@@ -309,12 +330,14 @@ class ProviderService:
         # Check custom model mappings
         for provider_name, provider_data in sorted_providers:
             model_mapping = provider_data.get("model_mapping", {})
+            provider_key_id = provider_data.get("id")
             if model in model_mapping:
                 mapped_model = model_mapping[model]
                 return (
                     provider_name,
                     mapped_model,
                     provider_data.get("base_url"),
+                    provider_key_id,
                 )
 
         logger.error(f"No matching provider found for {model}")
@@ -452,7 +475,7 @@ class ProviderService:
                 error=ValueError(error_message)
             )
 
-        provider_name, actual_model, base_url = self._get_provider_info(model)
+        provider_name, actual_model, base_url, provider_key_id = self._get_provider_info(model)
 
         # Enforce scope restriction (case-insensitive).
         if allowed_provider_names is not None and (
@@ -485,6 +508,22 @@ class ProviderService:
         adapter = ProviderAdapterFactory.get_adapter(provider_name, base_url, config)
 
         # Process the request through the adapter
+        usage_tracker_id = None
+        if self.api_key_id is not None and provider_key_id is not None:
+            usage_tracker_id = await UsageTrackerService.start_tracking_usage(
+                db=self.db,
+                user_id=self.user_id,
+                provider_key_id=provider_key_id,
+                forge_key_id=self.api_key_id,
+                model=actual_model,
+                endpoint=endpoint,
+            )
+        else:
+            # TODO: this shouldn't happen, but we handle it gracefully as we don't want to break the flow
+            # Dive deeper into this if it ever happens
+            logger.info(f"api_key_id: {self.api_key_id}, provider_key_id: {provider_key_id}")
+            logger.warning("No API key ID or provider key ID found, skipping usage tracking")
+
         if "completion" in endpoint:
             result = await adapter.process_completion(
                 endpoint,
@@ -522,6 +561,11 @@ class ProviderService:
         else:
             error_message = f"Unsupported endpoint: {endpoint}"
             logger.error(error_message)
+            # Delete the usage tracker record if it exists
+            await UsageTrackerService.delete_usage_tracker_record(
+                db=self.db,
+                usage_tracker_id=usage_tracker_id,
+            )
             raise NotImplementedError(error_message)
 
         # Track usage statistics if it's not a streaming response
@@ -529,33 +573,27 @@ class ProviderService:
             # Extract usage data from the response
             input_tokens = 0
             output_tokens = 0
+            cached_tokens = 0
+            reasoning_tokens = 0
 
+            # https://platform.openai.com/docs/api-reference/chat/object#chat/object-usage
             if isinstance(result, dict) and "usage" in result:
                 usage = result.get("usage", {})
                 input_tokens = usage.get("prompt_tokens", 0)
                 output_tokens = usage.get("completion_tokens", 0)
+                cached_tokens = usage.get("prompt_tokens_details", {}).get("cached_tokens", 0)
+                reasoning_tokens = usage.get("completion_tokens_details", {}).get("reasoning_tokens", 0)
 
-            # Record the usage statistics using the new logging method
-            # Use a fresh DB session for logging, since the original request session
-            # may have been closed by FastAPI after the response was returned.
-            from app.core.database import get_db_session
-
-            async with get_db_session() as new_db_session:
-                await UsageStatsService.log_api_request(
-                    db=new_db_session,
-                    user_id=self.user_id,
-                    provider_name=provider_name,
-                    model=actual_model,
-                    endpoint=endpoint,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                )
-                return result
+            asyncio.create_task(update_usage_in_background(usage_tracker_id, input_tokens, output_tokens, cached_tokens, reasoning_tokens))
+            return result
         else:
             # For streaming responses, wrap the generator to count tokens
             async def token_counting_stream() -> AsyncGenerator[bytes, None]:
+                approximate_input_tokens = 0
                 output_tokens = 0
                 input_tokens = 0
+                cached_tokens = 0
+                reasoning_tokens = 0
                 has_final_usage = False
                 chunks_processed = 0
 
@@ -568,12 +606,11 @@ class ProviderService:
                 messages = payload.get("messages", [])
 
                 # Rough estimate of input tokens based on message length
-                # This will be replaced with actual usage data if available in the final chunk
                 for msg in messages:
                     content = msg.get("content", "")
                     if isinstance(content, str):
                         # Rough approximation: 4 chars ~= 1 token
-                        input_tokens += len(content) // 4
+                        approximate_input_tokens += len(content) // 4
 
                 try:
                     async for chunk in result:
@@ -595,17 +632,20 @@ class ProviderService:
                                     data = json.loads(data_str)
 
                                     # Some providers include usage info in the last chunk
+                                    # https://platform.openai.com/docs/api-reference/chat_streaming/streaming#chat_streaming/streaming-usage
                                     if "usage" in data and data["usage"]:
                                         logger.debug(
                                             f"Found usage data in chunk: {data['usage']}"
                                         )
                                         usage = data.get("usage", {})
-                                        input_tokens = usage.get(
-                                            "prompt_tokens", input_tokens
-                                        )
-                                        output_tokens = usage.get(
-                                            "completion_tokens", output_tokens
-                                        )
+                                        input_tokens += usage.get(
+                                            "prompt_tokens", 0
+                                        ) or 0
+                                        output_tokens += usage.get(
+                                            "completion_tokens", 0
+                                        ) or 0
+                                        cached_tokens += usage.get("prompt_tokens_details", {}).get("cached_tokens", 0) or 0
+                                        reasoning_tokens += usage.get("completion_tokens_details", {}).get("reasoning_tokens", 0) or 0
                                         has_final_usage = True
 
                                     # Extract content from the chunk based on OpenAI format
@@ -640,25 +680,11 @@ class ProviderService:
                     logger.debug(
                         f"Logging API request final details: provider={provider_name}, "
                         f"model={actual_model}, input_tokens={input_tokens}, "
-                        f"output_tokens={output_tokens}"
+                        f"output_tokens={output_tokens}, cached_tokens={cached_tokens}, reasoning_tokens={reasoning_tokens}"
                     )
 
-                    # Use a fresh DB session for logging, since the original request session
-                    # may have been closed by FastAPI after the response was returned.
-                    from app.core.database import get_db_session
+                    asyncio.create_task(update_usage_in_background(usage_tracker_id, input_tokens or approximate_input_tokens, output_tokens, cached_tokens, reasoning_tokens))
 
-                    async with get_db_session() as new_db_session:
-                        await UsageStatsService.log_api_request(
-                            db=new_db_session,
-                            user_id=self.user_id,
-                            provider_name=provider_name,
-                            model=actual_model,
-                            endpoint=endpoint,
-                            input_tokens=input_tokens,
-                            output_tokens=output_tokens,
-                        )
-
-            # End of token_counting_stream function
             return token_counting_stream()
 
 

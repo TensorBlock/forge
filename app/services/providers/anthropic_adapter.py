@@ -37,7 +37,25 @@ class AnthropicAdapter(ProviderAdapter):
     @property
     def provider_name(self) -> str:
         return self._provider_name
+    
+    @staticmethod
+    def format_anthropic_usage(usage_data: dict[str, Any]) -> dict[str, Any]:
+        if not usage_data:
+            return None
 
+        input_tokens = usage_data.get("input_tokens", 0)
+        output_tokens = usage_data.get("output_tokens", 0)
+        cached_tokens = usage_data.get("cache_creation_input_tokens", 0) or 0
+        cached_tokens += usage_data.get("cache_read_input_tokens", 0) or 0
+        return {
+            "prompt_tokens": input_tokens,
+            "completion_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+            "prompt_tokens_details": {
+                "cached_tokens": cached_tokens,
+            },
+        }
+    
     @staticmethod
     def convert_openai_image_content_to_anthropic(
         msg: dict[str, Any],
@@ -374,11 +392,9 @@ class AnthropicAdapter(ProviderAdapter):
     ):
         """Handle streaming response from Anthropic API, including usage data."""
 
+        # https://docs.anthropic.com/en/docs/build-with-claude/streaming#full-http-stream-response
         async def stream_response() -> AsyncGenerator[bytes, None]:
             # Store parts of usage info as they arrive
-            captured_input_tokens = 0
-            captured_output_tokens = 0
-            usage_info_complete = False  # Flag to check if both are found
             request_id = f"chatcmpl-{uuid.uuid4()}"
 
             async with (
@@ -417,23 +433,37 @@ class AnthropicAdapter(ProviderAdapter):
                         try:
                             data = json.loads(data_str)
                             openai_chunk = None
+                            usage_data = None
                             finish_reason = None
                             # --- Event Processing Logic ---
 
                             # Capture Input Tokens from message_start
                             if event_type == "message_start":
                                 message_data = data.get("message", {})
-                                if "usage" in message_data:
-                                    captured_input_tokens = message_data["usage"].get(
-                                        "input_tokens", 0
-                                    )
-                                    captured_output_tokens = message_data["usage"].get(
-                                        "output_tokens", captured_output_tokens
-                                    )
+                                usage_data = AnthropicAdapter.format_anthropic_usage(message_data.get("usage", {}))
+                                if message_data:
+                                    openai_chunk = {
+                                        "id": request_id,
+                                        "object": "chat.completion.chunk",
+                                        "created": int(time.time()),
+                                        "model": model_name,
+                                        "choices": [
+                                            {
+                                                "index": 0,
+                                                "delta": {
+                                                    "role": message_data.get("role", "assistant"),
+                                                    "content": message_data.get("content", ""),
+                                                },
+                                                "finish_reason": None,
+                                            }
+                                        ],
+                                    }
 
                             elif event_type == "content_block_start":
                                 # Handle start of content blocks (text or tool_use)
                                 content_block = data.get("content_block", {})
+
+                                usage_data = AnthropicAdapter.format_anthropic_usage(data.get("usage", {}))
                                 if content_block.get("type") == "tool_use":
                                     # Start of a tool call
                                     openai_chunk = {
@@ -471,6 +501,8 @@ class AnthropicAdapter(ProviderAdapter):
 
                             elif event_type == "content_block_delta":
                                 delta = data.get("delta", {})
+
+                                usage_data = AnthropicAdapter.format_anthropic_usage(data.get("usage", {}))
                                 if delta.get("type") == "text_delta":
                                     # Text content delta
                                     delta_content = delta.get("text", "")
@@ -520,6 +552,9 @@ class AnthropicAdapter(ProviderAdapter):
                             # Capture Output Tokens & Finish Reason from message_delta
                             elif event_type == "message_delta":
                                 delta_data = data.get("delta", {})
+
+                                usage_data = AnthropicAdapter.format_anthropic_usage(data.get("usage", {}))
+
                                 anthropic_stop_reason = delta_data.get("stop_reason")
                                 if anthropic_stop_reason:
                                     # Map Anthropic stop reason to OpenAI finish reason
@@ -532,15 +567,6 @@ class AnthropicAdapter(ProviderAdapter):
                                     finish_reason = finish_reason_map.get(
                                         anthropic_stop_reason, "stop"
                                     )
-
-                                # Check for usage at the TOP LEVEL of the message_delta event data
-                                if "usage" in data:
-                                    usage_data_in_delta = data["usage"]
-                                    captured_output_tokens = usage_data_in_delta.get(
-                                        "output_tokens", captured_output_tokens
-                                    )
-                                    if captured_input_tokens > 0:
-                                        usage_info_complete = True
 
                             # Capture Finish Reason from message_stop (backup for usage)
                             elif event_type == "message_stop":
@@ -559,19 +585,7 @@ class AnthropicAdapter(ProviderAdapter):
                                         anthropic_stop_reason, "stop"
                                     )
 
-                                if not usage_info_complete and "usage" in data:
-                                    usage = data["usage"]
-                                    captured_input_tokens = usage.get(
-                                        "input_tokens", captured_input_tokens
-                                    )
-                                    captured_output_tokens = usage.get(
-                                        "output_tokens", captured_output_tokens
-                                    )
-                                    if (
-                                        captured_input_tokens > 0
-                                        and captured_output_tokens > 0
-                                    ):
-                                        usage_info_complete = True
+                                usage_data = AnthropicAdapter.format_anthropic_usage(data.get("usage", {}))
 
                             # --- Yielding Logic ---
                             if openai_chunk:
@@ -579,31 +593,30 @@ class AnthropicAdapter(ProviderAdapter):
                                     openai_chunk["choices"][0]["finish_reason"] = (
                                         finish_reason
                                     )
-                                yield f"data: {json.dumps(openai_chunk)}\n\n".encode()
 
-                            # Check if usage info is complete *after* potential content chunk
-                            if usage_info_complete:
-                                final_usage_data = {
-                                    "prompt_tokens": captured_input_tokens,
-                                    "completion_tokens": captured_output_tokens,
-                                    "total_tokens": captured_input_tokens
-                                    + captured_output_tokens,
-                                }
-                                usage_chunk = {
+                                if usage_data:
+                                    openai_chunk["usage"] = usage_data
+
+                                yield f"data: {json.dumps(openai_chunk)}\n\n".encode()
+                            elif usage_data:
+                                # yield the usage chunk
+                                openai_chunk = {
                                     "id": request_id,
                                     "object": "chat.completion.chunk",
                                     "created": int(time.time()),
                                     "model": model_name,
                                     "choices": [{"index": 0, "delta": {}}],
-                                    "usage": final_usage_data,
+                                    "usage": usage_data,
                                 }
-                                yield f"data: {json.dumps(usage_chunk)}\n\n".encode()
-                                # Reset flag to prevent duplicate yields
-                                usage_info_complete = False
+                                if finish_reason:
+                                    openai_chunk["choices"][0]["finish_reason"] = (
+                                        finish_reason
+                                    )
+                                yield f"data: {json.dumps(openai_chunk)}\n\n".encode()
 
                         except json.JSONDecodeError as e:
                             logger.warning(
-                                f"Stream API error for {self.provider_name}: Failed to parse JSON: {e}"
+                                f"Stream API error for Anthropic Base: Failed to parse JSON: {e}"
                             )
                             continue
                         except Exception as e:
@@ -696,12 +709,8 @@ class AnthropicAdapter(ProviderAdapter):
                             None  # OpenAI expects null content when tool calls are present
                         )
 
-                input_tokens = anthropic_response.get("usage", {}).get(
-                    "input_tokens", 0
-                )
-                output_tokens = anthropic_response.get("usage", {}).get(
-                    "output_tokens", 0
-                )
+                # https://docs.anthropic.com/en/api/messages#response-usage
+                usage_data = AnthropicAdapter.format_anthropic_usage(anthropic_response.get("usage", {}))
                 return {
                     "id": completion_id,
                     "object": "chat.completion",
@@ -714,11 +723,7 @@ class AnthropicAdapter(ProviderAdapter):
                             "finish_reason": finish_reason,
                         }
                     ],
-                    "usage": {
-                        "prompt_tokens": input_tokens,
-                        "completion_tokens": output_tokens,
-                        "total_tokens": input_tokens + output_tokens,
-                    },
+                    **({"usage": usage_data} if usage_data else {}),
                 }
             else:
                 # Legacy completion response
@@ -738,9 +743,9 @@ class AnthropicAdapter(ProviderAdapter):
                         }
                     ],
                     "usage": {
-                        "prompt_tokens": -1,
-                        "completion_tokens": -1,
-                        "total_tokens": -1,
+                        "prompt_tokens": 0,
+                        "completion_tokens": 0,
+                        "total_tokens": 0,
                     },
                 }
 
