@@ -3,7 +3,7 @@ import time
 import uuid
 from collections.abc import AsyncGenerator
 from http import HTTPStatus
-from typing import Any, Callable
+from typing import Any, Callable, Tuple
 
 import aiohttp
 
@@ -77,6 +77,42 @@ class AnthropicAdapter(ProviderAdapter):
             }
         else:
             return {"type": "image", "source": {"type": "url", "url": data_url}}
+    
+    @staticmethod
+    def translate_anthropic_content_to_openai(
+        content: list[dict[str, Any]] | str | None,
+    ) -> Tuple[str, list[Any]]:
+        """Translate Anthropic content to OpenAI content"""
+        if content is None:
+            return "", []
+        
+        if isinstance(content, str):
+            return content, []
+        
+        text_content = ""
+        tool_calls = []
+        for block in content:
+            if not block or not isinstance(block, dict):
+                continue
+
+            if block.get("type") == "text":
+                text_content += block.get("text", "")
+            elif block.get("type") == "tool_use":
+                # Convert Anthropic tool use to OpenAI tool call format
+                tool_calls.append(
+                    {
+                        "id": block.get(
+                            "id", f"call_{uuid.uuid4().hex[:8]}"
+                        ),
+                        "type": "function",
+                        "function": {
+                            "name": block.get("name", ""),
+                            "arguments": json.dumps(block.get("input", {})),
+                        },
+                    }
+                )
+        return text_content, tool_calls
+        
 
     @staticmethod
     def convert_openai_content_to_anthropic(
@@ -452,7 +488,7 @@ class AnthropicAdapter(ProviderAdapter):
                                                 "index": 0,
                                                 "delta": {
                                                     "role": message_data.get("role", "assistant"),
-                                                    "content": message_data.get("content", ""),
+                                                    "content": AnthropicAdapter.translate_anthropic_content_to_openai(message_data.get("content", []))[0],
                                                 },
                                                 "finish_reason": None,
                                             }
@@ -659,31 +695,7 @@ class AnthropicAdapter(ProviderAdapter):
             if "messages" in anthropic_payload:
                 # Messages API response
                 content = anthropic_response.get("content", [])
-                text_content = ""
-                tool_calls = []
-
-                # Extract text and tool calls from content blocks
-                if content:  # Ensure content is not None
-                    for block in content:
-                        if not block or not isinstance(block, dict):
-                            continue
-
-                        if block.get("type") == "text":
-                            text_content += block.get("text", "")
-                        elif block.get("type") == "tool_use":
-                            # Convert Anthropic tool use to OpenAI tool call format
-                            tool_calls.append(
-                                {
-                                    "id": block.get(
-                                        "id", f"call_{uuid.uuid4().hex[:8]}"
-                                    ),
-                                    "type": "function",
-                                    "function": {
-                                        "name": block.get("name", ""),
-                                        "arguments": json.dumps(block.get("input", {})),
-                                    },
-                                }
-                            )
+                text_content, tool_calls = AnthropicAdapter.translate_anthropic_content_to_openai(content)
 
                 # Map Anthropic stop reason to OpenAI finish reason
                 stop_reason = anthropic_response.get("stop_reason", "end_turn")

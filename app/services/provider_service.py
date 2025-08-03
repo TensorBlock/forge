@@ -15,7 +15,7 @@ from app.core.logger import get_logger
 from app.core.security import decrypt_api_key, encrypt_api_key
 from app.exceptions.exceptions import InvalidProviderException, BaseInvalidRequestException, InvalidForgeKeyException
 from app.models.user import User
-from app.services.usage_stats_service import UsageStatsService
+from app.core.database import get_db_session
 
 from .providers.adapter_factory import ProviderAdapterFactory
 from .providers.base import ProviderAdapter
@@ -31,7 +31,6 @@ MODEL_PARTS_MIN_LENGTH = 2  # Minimum number of parts in a model name (e.g., "gp
 async def update_usage_in_background(usage_tracker_id: uuid.UUID, input_tokens: int, output_tokens: int, cached_tokens: int, reasoning_tokens: int):
     # Use a fresh DB session for logging, since the original request session
     # may have been closed by FastAPI after the response was returned.
-    from app.core.database import get_db_session
 
     async with get_db_session() as new_db_session:
         await UsageTrackerService.update_usage_tracker(
@@ -590,11 +589,11 @@ class ProviderService:
             # For streaming responses, wrap the generator to count tokens
             async def token_counting_stream() -> AsyncGenerator[bytes, None]:
                 approximate_input_tokens = 0
+                approximate_output_tokens = 0
                 output_tokens = 0
                 input_tokens = 0
                 cached_tokens = 0
                 reasoning_tokens = 0
-                has_final_usage = False
                 chunks_processed = 0
 
                 # Get the streaming mode from the payload
@@ -646,7 +645,6 @@ class ProviderService:
                                         ) or 0
                                         cached_tokens += usage.get("prompt_tokens_details", {}).get("cached_tokens", 0) or 0
                                         reasoning_tokens += usage.get("completion_tokens_details", {}).get("reasoning_tokens", 0) or 0
-                                        has_final_usage = True
 
                                     # Extract content from the chunk based on OpenAI format
                                     if "choices" in data:
@@ -657,9 +655,9 @@ class ProviderService:
                                             ):
                                                 content = choice["delta"]["content"]
                                                 # Only count tokens if we don't have final usage data
-                                                if not has_final_usage and content:
+                                                if content:
                                                     # Count tokens in content (approx)
-                                                    output_tokens += len(content) // 4
+                                                    approximate_output_tokens += len(content) // 4
                                 except json.JSONDecodeError:
                                     # If JSON parsing fails, just continue
                                     pass
@@ -683,7 +681,7 @@ class ProviderService:
                         f"output_tokens={output_tokens}, cached_tokens={cached_tokens}, reasoning_tokens={reasoning_tokens}"
                     )
 
-                    asyncio.create_task(update_usage_in_background(usage_tracker_id, input_tokens or approximate_input_tokens, output_tokens, cached_tokens, reasoning_tokens))
+                    asyncio.create_task(update_usage_in_background(usage_tracker_id, input_tokens or approximate_input_tokens, output_tokens or approximate_output_tokens, cached_tokens, reasoning_tokens))
 
             return token_counting_stream()
 
