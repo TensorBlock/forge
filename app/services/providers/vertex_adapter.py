@@ -46,6 +46,18 @@ class VertexAdapter(ProviderAdapter):
         self.validate_config(config)
         self.publisher = config.get("publisher", "anthropic").lower()
         self.location = config["location"].lower()
+
+        # ------------------------------------------------------------------
+        # Build the Vertex API endpoint based on the location.
+        # If the location is "global", use the default domain without the
+        # region prefix. Otherwise, prefix the domain with the region.
+        #   global   -> https://aiplatform.googleapis.com
+        #   us-east1 -> https://us-east1-aiplatform.googleapis.com
+        # ------------------------------------------------------------------
+        if self.location == "global":
+            self._base_url = "https://aiplatform.googleapis.com"
+        else:
+            self._base_url = f"https://{self.location}-aiplatform.googleapis.com"
     
     @staticmethod
     def validate_api_key(api_key: str):
