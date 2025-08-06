@@ -7,6 +7,7 @@ import json
 import asyncio
 import configparser
 from datetime import datetime
+import re
 from typing import Any, Dict, List, Optional
 from pathlib import Path
 
@@ -482,11 +483,34 @@ class CreateAPIKeyScreen(ModalScreen[bool]):
             if isinstance(result, dict) and result.get("key"):
                 # Show the created API key
                 api_key = result["key"]
-                await self.app.push_screen(ShowAPIKeyScreen(api_key))
-            self.app.notify("API key created successfully!", severity="information")
-            self.dismiss(True)
+                show_result = await self.app.push_screen(ShowAPIKeyScreen(api_key), callback=self.handle_show_api_key_screen_result)
+                # self.app.notify(f"ShowAPIKeyScreen result: {show_result}", severity="information")
+                # 如果用户选择返回首页，则切换到首页标签
+                # if show_result == True:
+                #     try:
+                #         self.dismiss(True)
+                #         # tabbed_content = self.app.query_one(TabbedContent)
+                #         # tabbed_content.active = "auth"
+                #         self.app.notify("已返回首页", severity="information")
+                #         return  # 重要：这里要返回，避免执行下面的代码
+                #     except Exception as e:
+                #         self.app.notify(f"无法切换到首页: {e}", severity="error")
+        
+            # 只有在用户没有选择返回首页时才显示成功消息并关闭对话框
+            
+            # self.dismiss(True)
         else:
             self.app.notify(f"Failed to create API key: {result}", severity="error")
+
+    async def handle_show_api_key_screen_result(self, result: bool):
+        self.app.notify(f"ShowAPIKeyScreen result: {result}", severity="information")
+        if result == True:
+            self.dismiss(True)
+            # self.app.notify("已返回首页", severity="information")
+            self.app.notify("API key created successfully!", severity="information")
+            return
+        else:
+            self.dismiss(False)
 
     @on(Button.Pressed, "#cancel-btn")
     def handle_cancel(self):
@@ -503,8 +527,9 @@ class ShowAPIKeyScreen(ModalScreen[bool]):
     def compose(self) -> ComposeResult:
         with Container(id="show-key-dialog"):
             yield Static("🔑 Your New API Key", id="show-key-title")
-            yield Static("⚠️ Please copy and save this key now. You won't be able to see it again!", classes="warning")
-            yield Input(value=self.api_key, id="api-key-display", disabled=True)
+            yield Static("⚠️  Please copy and save this key now. \nYou won't be able to see it again! \nPress Ctrl+C to copy to clipboard", classes="warning")
+            # yield Static(self.api_key, id="api-key-display")
+            yield TextArea(text=self.api_key, id="api-key-display", read_only=True)
             with Horizontal():
                 yield Button("Copy to Clipboard", variant="primary", id="copy-btn")
                 yield Button("Close", variant="default", id="close-btn")
@@ -516,6 +541,7 @@ class ShowAPIKeyScreen(ModalScreen[bool]):
 
     @on(Button.Pressed, "#close-btn")
     def handle_close(self):
+        # 关闭模态框并传递特殊标识，表示需要返回首页
         self.dismiss(True)
 
 
@@ -758,27 +784,44 @@ class APIKeyActionScreen(ModalScreen[bool]):
     @on(Button.Pressed, "#update-btn")
     async def handle_update(self):
         # Launch update screen
-        result = await self.app.push_screen(UpdateAPIKeyScreen(self.key_id, self.key_name))
-        if result:
+        result = await self.app.push_screen(UpdateAPIKeyScreen(self.key_id, self.key_name), callback=self.handle_update_api_key_screen_result)
+        
+        
+    async def handle_update_api_key_screen_result(self, result: bool):
+        self.app.notify(f"UpdateAPIKeyScreen result: {result}", severity="information")
+        if result == True:
             self.dismiss(True)
+            self.app.notify("API key updated successfully!", severity="information")
+        else:
+            self.dismiss(False)
 
     @on(Button.Pressed, "#delete-btn")
     async def handle_delete(self):
         # Show confirmation first
-        confirm = await self.app.push_screen(ConfirmDeleteScreen("API Key", self.key_name))
+        confirm = await self.app.push_screen(ConfirmDeleteScreen("API Key", self.key_name), callback=self.handle_confirm_delete_screen_result)
         self.app.notify(f"Confirm: {confirm}")
         if not confirm:
             self.dismiss(False)
             return
             
-        forge_api = self.app.forge_api
-        success, message = await forge_api.delete_forge_api_key(int(self.key_id))
         
-        if success:
-            self.app.notify("API key deleted successfully!", severity="information")
+    async def handle_confirm_delete_screen_result(self, result: bool):
+        self.app.notify(f"ConfirmDeleteScreen result: {result}", severity="information")
+        if result == True:
             self.dismiss(True)
+            forge_api = self.app.forge_api
+            success, message = await forge_api.delete_forge_api_key(int(self.key_id))
+            
+            if success:
+                self.app.notify("API key deleted successfully!", severity="information")
+                self.dismiss(True)
+            else:
+                self.app.notify(f"Failed to delete API key: {message}", severity="error")
+
+                self.app.notify("API key deleted successfully!", severity="information")
         else:
-            self.app.notify(f"Failed to delete API key: {message}", severity="error")
+            self.dismiss(False)
+            self.app.notify("API key deletion cancelled!", severity="information")
 
     @on(Button.Pressed, "#toggle-active-btn")
     async def handle_toggle_active(self):
@@ -849,25 +892,32 @@ class ProviderActionScreen(ModalScreen[bool]):
             return
             
         # Launch update screen with current data
-        result = await self.app.push_screen(UpdateProviderScreen(current_provider))
-        if result:
+        result = await self.app.push_screen(UpdateProviderScreen(current_provider), callback=self.handle_update_provider_screen_result)
+
+    async def handle_update_provider_screen_result(self, result: bool):
+        self.app.notify(f"UpdateProviderScreen result: {result}", severity="information")
+        if result == True:
             self.dismiss(True)
+        else:
+            self.dismiss(False)
 
     @on(Button.Pressed, "#delete-btn")
     async def handle_delete(self):
         # Show confirmation first
-        confirm = await self.app.push_screen(ConfirmDeleteScreen("Provider", self.provider_name))
-        if not confirm:
-            return
-            
-        forge_api = self.app.forge_api
-        success, message = await forge_api.delete_provider_key(self.provider_name)
-        
-        if success:
-            self.app.notify("Provider deleted successfully!", severity="information")
+        confirm = await self.app.push_screen(ConfirmDeleteScreen("Provider", self.provider_name), callback=self.handle_confirm_delete_screen_result)
+
+    async def handle_confirm_delete_screen_result(self, result: bool):
+        self.app.notify(f"ConfirmDeleteScreen result: {result}", severity="information")
+        if result == True:
             self.dismiss(True)
-        else:
-            self.app.notify(f"Failed to delete provider: {message}", severity="error")
+            forge_api = self.app.forge_api
+            success, message = await forge_api.delete_provider_key(self.provider_name)
+        
+            if success:
+                self.app.notify("Provider deleted successfully!", severity="information")
+                self.dismiss(True)
+            else:
+                self.app.notify(f"Failed to delete provider: {message}", severity="error")
 
     @on(Button.Pressed, "#cancel-btn")
     def handle_cancel(self):
@@ -888,15 +938,22 @@ class AuthTab(Static):
 
     @on(Button.Pressed, "#login-button")
     async def handle_login(self):
-        result = await self.app.push_screen(LoginScreen())
-        if result:
+        result = await self.app.push_screen(LoginScreen(), callback=self.handle_login_screen_result)
+
+    async def handle_login_screen_result(self, result: bool):
+        self.app.notify(f"LoginScreen result: {result}", severity="information")
+        if result == True:
             await self.update_auth_status()
             await self.handle_user_info()  # 自动显示用户信息
+        
 
     @on(Button.Pressed, "#register-button")
     async def handle_register(self):
-        result = await self.app.push_screen(RegisterScreen())
-        if result:
+        result = await self.app.push_screen(RegisterScreen(), callback=self.handle_register_screen_result)
+
+    async def handle_register_screen_result(self, result: bool):
+        self.app.notify(f"RegisterScreen result: {result}", severity="information")
+        if result == True:
             await self.update_auth_status()
             await self.handle_user_info()  # 自动显示用户信息
 
@@ -978,15 +1035,27 @@ class APIKeysTab(Static):
         self.app.notify(f"Selected key ID: {key_id}, Name: {row_data[1]}", severity="information")
         
         # Show action menu
-        result = await self.app.push_screen(APIKeyActionScreen(key_id, row_data[1]))
-        if result:
+        result = await self.app.push_screen(APIKeyActionScreen(key_id, row_data[1]), callback=self.handle_api_key_action_screen_result)
+
+    async def handle_api_key_action_screen_result(self, result: bool):
+        self.app.notify(f"APIKeyActionScreen result: {result}", severity="information")
+        if result == True:
             await self.refresh_api_keys()
+        #     self.dismiss(True)
+        # else:
+        #     self.dismiss(False)
 
     @on(Button.Pressed, "#create-key-button")
     async def handle_create_key(self):
-        result = await self.app.push_screen(CreateAPIKeyScreen())
-        if result:
+        result = await self.app.push_screen(CreateAPIKeyScreen(), callback=self.handle_create_key_screen_result)
+
+    async def handle_create_key_screen_result(self, result: bool):
+        self.app.notify(f"CreateAPIKeyScreen result: {result}", severity="information")
+        if result == True:
             await self.refresh_api_keys()
+        #     self.dismiss(True)
+        # else:
+        #     self.dismiss(False)
 
     @on(Button.Pressed, "#refresh-keys-button")
     async def refresh_api_keys(self):
@@ -1042,15 +1111,27 @@ class ProvidersTab(Static):
         self.app.notify(f"Selected provider: {provider_name}", severity="information")
         
         # Show action menu
-        result = await self.app.push_screen(ProviderActionScreen(provider_name))
-        if result:
+        result = await self.app.push_screen(ProviderActionScreen(provider_name), callback=self.handle_provider_action_screen_result)
+
+    async def handle_provider_action_screen_result(self, result: bool):
+        self.app.notify(f"ProviderActionScreen result: {result}", severity="information")
+        if result == True:
             await self.refresh_providers()
+            # self.dismiss(True)
+        # else:
+        #     self.dismiss(False)
 
     @on(Button.Pressed, "#add-provider-button")
     async def handle_add_provider(self):
-        result = await self.app.push_screen(AddProviderScreen())
-        if result:
+        result = await self.app.push_screen(AddProviderScreen(), callback=self.handle_add_provider_screen_result)
+
+    async def handle_add_provider_screen_result(self, result: bool):
+        self.app.notify(f"AddProviderScreen result: {result}", severity="information")
+        if result == True:
             await self.refresh_providers()
+            # self.dismiss(True)
+        # else:
+        #     self.dismiss(False)
 
     @on(Button.Pressed, "#refresh-providers-button")
     async def refresh_providers(self):
@@ -1260,20 +1341,20 @@ class ForgeApp(App):
     CSS_PATH = Path(__file__).parent / "styles.tcss"
     
     BINDINGS = [
-        Binding("q", "quit", "Quit", priority=True),
+        Binding("ctrl+q", "quit", "Quit", priority=True),
         Binding("ctrl+c", "quit", "Quit", show=False),
-        Binding("f1", "toggle_dark", "Toggle Dark Mode"),
-        Binding("f2", "refresh_all", "Refresh All Data"),
+        Binding("ctrl+d", "toggle_dark", "Toggle Dark Mode"),
+        Binding("ctrl+r", "refresh_all", "Refresh"),
         Binding("ctrl+n", "new_api_key", "New API Key"),
-        Binding("ctrl+p", "new_provider", "New Provider"),
+        Binding("ctrl+shift+n", "new_provider", "New Provider"),
     ]
 
     def __init__(self):
         super().__init__()
         self.config = Config()
         self.forge_api = ForgeAPI(self.config)
-        self.title = "Forge TUI - Middleware Service Manager"
-        self.sub_title = "Unified AI Provider Management"
+        self.title = "TensorBlock Forge TUI"
+        self.sub_title = "Unified AI Provider & API Keys Management"
         
         # Set theme based on config
         theme = self.config.get('ui', 'default_theme', 'dark').lower()
@@ -1318,14 +1399,20 @@ class ForgeApp(App):
 
     async def action_new_api_key(self) -> None:
         """Quick create new API key"""
-        result = await self.push_screen(CreateAPIKeyScreen())
-        if result:
+        result = await self.push_screen(CreateAPIKeyScreen(), callback=self.handle_create_key_screen_result)
+
+    async def handle_create_key_screen_result(self, result: bool):
+        self.app.notify(f"CreateAPIKeyScreen result: {result}", severity="information")
+        if result == True:
             self.notify("API key created successfully!", severity="information")
 
     async def action_new_provider(self) -> None:
         """Quick add new provider"""
-        result = await self.push_screen(AddProviderScreen())
-        if result:
+        result = await self.push_screen(AddProviderScreen(), callback=self.handle_add_provider_screen_result)
+
+    async def handle_add_provider_screen_result(self, result: bool):
+        self.app.notify(f"AddProviderScreen result: {result}", severity="information")
+        if result == True:
             self.notify("Provider added successfully!", severity="information")
 
     def action_quit(self) -> None:
