@@ -23,4 +23,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    pass
+    op.drop_column('provider_keys', 'deleted_at')
+    op.drop_column('forge_api_keys', 'deleted_at')
+    op.alter_column('forge_api_keys', 'key', nullable=False)

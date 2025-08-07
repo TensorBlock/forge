@@ -188,9 +188,8 @@ async def _process_provider_key_delete_data(
     # Store the provider key data before deletion
     provider_key_data = ProviderKey.model_validate(db_provider_key)
 
-    # do soft deletiong here. Set the deleted_at column to the current time and set encrypted_api_key to None
+    # do soft deletion here. Set the deleted_at column to the current time
     db_provider_key.deleted_at = datetime.now(UTC)
-    db_provider_key.encrypted_api_key = None
     
     # Delete the record from forge_api_key_provider_scope_association where provider_key_id matches current id
     await db.execute(

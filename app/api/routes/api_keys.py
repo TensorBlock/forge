@@ -183,9 +183,8 @@ async def _delete_api_key_internal(
         "allowed_provider_key_ids": [pk.id for pk in db_api_key.allowed_provider_keys],
     }
 
-    # do soft deletiong here. Set the deleted_at column to the current time and set key to None
+    # do soft deletion here. Set the deleted_at column to the current time
     db_api_key.deleted_at = datetime.now(UTC)
-    db_api_key.key = None
 
     # Delete the record from forge_api_key_provider_scope_association where forge_api_key_id matches current id
     await db.execute(

@@ -30,7 +30,7 @@ class ForgeApiKey(Base):
     __tablename__ = "forge_api_keys"
 
     id = Column(Integer, primary_key=True, index=True)
-    key = Column(String, unique=True, index=True, nullable=True)
+    key = Column(String, unique=True, index=True, nullable=False)
     name = Column(String, nullable=True)  # Optional name/description for the key
     user_id = Column(
         Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
