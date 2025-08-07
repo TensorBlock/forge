@@ -105,7 +105,7 @@ class TestAnthropicProvider(TestCase):
                 result,
                 expected_model="claude-sonnet-4-20250514",
                 expected_message=ANTHROPIC_STANDARD_CHAT_COMPLETION_RESPONSE,
-                expected_usage={"prompt_tokens": 13, "completion_tokens": 39},
+                expected_usage={"prompt_tokens": 13, "completion_tokens": 40},
             )
             assert mock_session.posted_json[0] == {
                 "model": "claude-sonnet-4-20250514",

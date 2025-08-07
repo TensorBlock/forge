@@ -195,65 +195,76 @@ class TestProviderService(TestCase):
     async def test_get_provider_info_explicit_mapping(self):
         """Test getting provider info with an explicitly mapped model"""
         # Since keys are already loaded in setUp, _get_provider_info should work directly
-        provider, model, base_url = self.service._get_provider_info("custom-gpt")
+        provider, model, base_url, provider_key_id = self.service._get_provider_info("custom-gpt")
 
         self.assertEqual(provider, "openai")
         self.assertEqual(model, "gpt-4")
         self.assertIsNone(base_url)
+        self.assertEqual(provider_key_id, self.provider_key_openai.id)
 
-        provider, model, base_url = self.service._get_provider_info("test-gemini")
+        provider, model, base_url, provider_key_id = self.service._get_provider_info("test-gemini")
 
         self.assertEqual(provider, "gemini")
         self.assertEqual(model, "models/gemini-2.0-flash")
         self.assertIsNone(base_url)
+        self.assertEqual(provider_key_id, self.provider_key_google.id)
 
     async def test_get_provider_info_prefix_matching(self):
         """Test getting provider info with prefix matching"""
         # Test OpenAI prefix
-        provider, model, base_url = self.service._get_provider_info(
+        provider, model, base_url, provider_key_id = self.service._get_provider_info(
             "openai/gpt-3.5-turbo"
         )
         self.assertEqual(provider, "openai")
+        self.assertEqual(provider_key_id, self.provider_key_openai.id)
 
         # Test Anthropic prefix
-        provider, model, base_url = self.service._get_provider_info(
+        provider, model, base_url, provider_key_id = self.service._get_provider_info(
             "anthropic/claude-2"
         )
         self.assertEqual(provider, "anthropic")
+        self.assertEqual(provider_key_id, self.provider_key_anthropic.id)
 
         # Test Google prefix
-        provider, model, base_url = self.service._get_provider_info(
+        provider, model, base_url, provider_key_id = self.service._get_provider_info(
             "gemini/models/gemini-2.0-flash"
         )
         self.assertEqual(provider, "gemini")
+        self.assertEqual(provider_key_id, self.provider_key_google.id)
 
         # Test XAI prefix
-        provider, model, base_url = self.service._get_provider_info("xai/grok-2-1212")
+        provider, model, base_url, provider_key_id = self.service._get_provider_info("xai/grok-2-1212")
         self.assertEqual(provider, "xai")
+        self.assertEqual(provider_key_id, self.provider_key_xai.id)
 
         # Test Fireworks prefix
-        provider, model, base_url = self.service._get_provider_info(
+        provider, model, base_url, provider_key_id = self.service._get_provider_info(
             "fireworks/accounts/fireworks/models/code-llama-7b"
         )
         self.assertEqual(provider, "fireworks")
+        self.assertEqual(provider_key_id, self.provider_key_fireworks.id)
 
         # Test OpenRouter prefix
-        provider, model, base_url = self.service._get_provider_info(
+        provider, model, base_url, provider_key_id = self.service._get_provider_info(
             "openrouter/openai/gpt-4o"
         )
         self.assertEqual(provider, "openrouter")
+        self.assertEqual(provider_key_id, self.provider_key_openrouter.id)
 
         # Test Together prefix
-        provider, model, base_url = self.service._get_provider_info(
+        provider, model, base_url, provider_key_id = self.service._get_provider_info(
             "together/WhereIsAI/UAE-Large-V1"
         )
         self.assertEqual(provider, "together")
+        self.assertEqual(provider_key_id, self.provider_key_together.id)
 
-        provider, model, base_url = self.service._get_provider_info("azure/gpt-4o")
+        provider, model, base_url, provider_key_id = self.service._get_provider_info("azure/gpt-4o")
         self.assertEqual(provider, "azure")
+        self.assertEqual(provider_key_id, self.provider_key_azure.id)
 
-        provider, model, base_url = self.service._get_provider_info("bedrock/anthropic.claude-3-5-sonnet-20240620-v1:0")
+        provider, model, base_url, provider_key_id = self.service._get_provider_info("bedrock/anthropic.claude-3-5-sonnet-20240620-v1:0")
         self.assertEqual(provider, "bedrock")
+        self.assertEqual(provider_key_id, self.provider_key_bedrock.id)
 
     @patch("aiohttp.ClientSession.post")
     async def test_call_openai_api(self, mock_post):

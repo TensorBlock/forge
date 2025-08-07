@@ -95,7 +95,7 @@ async def add_mock_provider_to_user(user_id):
     async with get_db_session() as db:
         try:
             # Check if the mock provider already exists for this user
-            result = await db.execute(select(ProviderKey).filter(ProviderKey.user_id == user_id, ProviderKey.provider_name == "mock"))
+            result = await db.execute(select(ProviderKey).filter(ProviderKey.user_id == user_id, ProviderKey.provider_name == "mock", ProviderKey.deleted_at == None))
             existing_provider = result.scalar_one_or_none()
 
             if existing_provider:

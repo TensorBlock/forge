@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import json
+from typing import Any
 
 # Add environment variables for Clerk
 import os
@@ -147,11 +148,12 @@ async def get_api_key_from_headers(request: Request) -> str:
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="API key not found in headers",
     )
-
+    
 
 async def get_user_by_api_key(
     request: Request = None,
     db: AsyncSession = Depends(get_async_db),
+    include_api_key_id: bool = False,
 ) -> User:
     """Get user by API key from headers, with caching"""
     api_key_from_header = await get_api_key_from_headers(request)
@@ -185,7 +187,22 @@ async def get_user_by_api_key(
         # Return a transient User object from cached data, not a managed one.
         # This avoids the db.merge() call and its expensive SELECT query.
         # Downstream code can access attributes, but not lazy-load relationships.
-        return User(**cached_user.model_dump())
+        if not include_api_key_id:
+            return User(**cached_user.model_dump())
+        else:
+            result = await db.execute(
+                select(ForgeApiKey)
+                .options(selectinload(ForgeApiKey.allowed_provider_keys))
+                .filter(ForgeApiKey.key == api_key_from_header, ForgeApiKey.is_active, ForgeApiKey.deleted_at == None)
+            )
+            api_key_record = result.scalar_one_or_none()
+
+            if not api_key_record:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid API key",
+                )
+            return User(**cached_user.model_dump()), api_key_record.id
 
     # Try scope cache first – this doesn't remove the need to verify the key, but it
     # avoids an extra query later in /models.
@@ -194,7 +211,7 @@ async def get_user_by_api_key(
     result = await db.execute(
         select(ForgeApiKey)
         .options(selectinload(ForgeApiKey.allowed_provider_keys))
-        .filter(ForgeApiKey.key == api_key_from_header, ForgeApiKey.is_active)
+        .filter(ForgeApiKey.key == api_key_from_header, ForgeApiKey.is_active, ForgeApiKey.deleted_at == None)
     )
     api_key_record = result.scalar_one_or_none()
 
@@ -243,7 +260,22 @@ async def get_user_by_api_key(
     # Cache the user data for future requests
     await cache_user_async(api_key, user)
 
+    if include_api_key_id:
+        return user, api_key_record.id
     return user
+
+
+async def get_user_details_by_api_key(
+    request: Request = None,
+    db: AsyncSession = Depends(get_async_db),
+) -> dict[str, Any]:
+    """Get user details by API key from headers, with caching"""
+    user, api_key_id = await get_user_by_api_key(request, db, include_api_key_id=True)
+
+    return {
+        "user": user,
+        "api_key_id": api_key_id,
+    }
 
 
 async def validate_clerk_jwt(token: str = Depends(clerk_token_header)):

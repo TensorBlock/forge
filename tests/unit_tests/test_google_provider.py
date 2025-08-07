@@ -121,7 +121,7 @@ class TestGoogleProvider(TestCase):
                 result,
                 expected_model="models/gemini-1.5-pro-latest",
                 expected_message=GOOGLE_STANDARD_CHAT_COMPLETION_RESPONSE,
-                expected_usage={"prompt_tokens": 6, "completion_tokens": 16},
+                expected_usage={"prompt_tokens": 12, "completion_tokens": 16},
             )
             assert mock_session.posted_json[0] == {
                 "generationConfig": {

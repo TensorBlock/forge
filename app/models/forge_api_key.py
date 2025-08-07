@@ -38,6 +38,7 @@ class ForgeApiKey(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     last_used_at = Column(DateTime, nullable=True)
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
 
     # Relationship to user
     user = relationship("User", back_populates="api_keys")

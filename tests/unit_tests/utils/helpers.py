@@ -139,8 +139,29 @@ def process_openai_streaming_response(response: str, result: dict):
     result["content"] = result.get("content", "") + content
 
     usage = data.get("usage", {})
+    result_usage = result.get("usage", {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "prompt_tokens_details": {
+            "cached_tokens": 0,
+        },
+        "completion_tokens_details": {
+            "reasoning_tokens": 0,
+        },
+    })
     if usage:
-        result["usage"] = usage
+        prompt_tokens = usage.get("prompt_tokens", 0)
+        completion_tokens = usage.get("completion_tokens", 0)
+        total_tokens = usage.get("total_tokens", 0) or (prompt_tokens + completion_tokens)
+        cached_tokens = usage.get("prompt_tokens_details", {}).get("cached_tokens", 0)
+        reasoning_tokens = usage.get("completion_tokens_details", {}).get("reasoning_tokens", 0)
+        result_usage["prompt_tokens"] += prompt_tokens
+        result_usage["completion_tokens"] += completion_tokens
+        result_usage["total_tokens"] += total_tokens
+        result_usage["prompt_tokens_details"]["cached_tokens"] += cached_tokens
+        result_usage["completion_tokens_details"]["reasoning_tokens"] += reasoning_tokens
+        result["usage"] = result_usage
 
 
 def validate_chat_completion_streaming_response(
@@ -157,3 +178,7 @@ def validate_chat_completion_streaming_response(
         usage = response["usage"]
         assert usage["prompt_tokens"] == expected_usage["prompt_tokens"]
         assert usage["completion_tokens"] == expected_usage["completion_tokens"]
+        if "prompt_tokens_details" in expected_usage:
+            expected_usage["prompt_tokens_details"] = usage["prompt_tokens_details"]
+        if "completion_tokens_details" in expected_usage:
+            expected_usage["completion_tokens_details"] = usage["completion_tokens_details"]

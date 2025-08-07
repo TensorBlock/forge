@@ -1,7 +1,8 @@
 from typing import Any
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -18,7 +19,7 @@ from app.api.schemas.forge_api_key import (
 from app.core.async_cache import invalidate_forge_scope_cache_async, invalidate_user_cache_async, invalidate_provider_service_cache_async
 from app.core.database import get_async_db
 from app.core.security import generate_forge_api_key
-from app.models.forge_api_key import ForgeApiKey
+from app.models.forge_api_key import ForgeApiKey, forge_api_key_provider_scope_association
 from app.models.provider_key import ProviderKey as ProviderKeyModel
 from app.models.user import User as UserModel
 
@@ -36,7 +37,7 @@ async def _get_api_keys_internal(
     result = await db.execute(
         select(ForgeApiKey)
         .options(selectinload(ForgeApiKey.allowed_provider_keys))
-        .filter(ForgeApiKey.user_id == current_user.id)
+        .filter(ForgeApiKey.user_id == current_user.id, ForgeApiKey.deleted_at == None)
     )
     api_keys = result.scalars().all()
 
@@ -71,6 +72,7 @@ async def _create_api_key_internal(
                 select(ProviderKeyModel).filter(
                     ProviderKeyModel.id.in_(api_key_create.allowed_provider_key_ids),
                     ProviderKeyModel.user_id == current_user.id,
+                    ProviderKeyModel.deleted_at == None,
                 )
             )
             allowed_providers = result.scalars().all()
@@ -103,7 +105,7 @@ async def _update_api_key_internal(
     result = await db.execute(
         select(ForgeApiKey)
         .options(selectinload(ForgeApiKey.allowed_provider_keys))
-        .filter(ForgeApiKey.id == key_id, ForgeApiKey.user_id == current_user.id)
+        .filter(ForgeApiKey.id == key_id, ForgeApiKey.user_id == current_user.id, ForgeApiKey.deleted_at == None)
     )
     db_api_key = result.scalar_one_or_none()
     
@@ -126,6 +128,7 @@ async def _update_api_key_internal(
                 select(ProviderKeyModel).filter(
                     ProviderKeyModel.id.in_(api_key_update.allowed_provider_key_ids),
                     ProviderKeyModel.user_id == current_user.id,
+                    ProviderKeyModel.deleted_at == None,
                 )
             )
             allowed_providers = result.scalars().all()
@@ -161,7 +164,7 @@ async def _delete_api_key_internal(
     result = await db.execute(
         select(ForgeApiKey)
         .options(selectinload(ForgeApiKey.allowed_provider_keys))
-        .filter(ForgeApiKey.id == key_id, ForgeApiKey.user_id == current_user.id)
+        .filter(ForgeApiKey.id == key_id, ForgeApiKey.user_id == current_user.id, ForgeApiKey.deleted_at == None)
     )
     db_api_key = result.scalar_one_or_none()
     
@@ -180,7 +183,16 @@ async def _delete_api_key_internal(
         "allowed_provider_key_ids": [pk.id for pk in db_api_key.allowed_provider_keys],
     }
 
-    await db.delete(db_api_key)
+    # do soft deletion here. Set the deleted_at column to the current time
+    db_api_key.deleted_at = datetime.now(UTC)
+
+    # Delete the record from forge_api_key_provider_scope_association where forge_api_key_id matches current id
+    await db.execute(
+        delete(forge_api_key_provider_scope_association).where(
+            forge_api_key_provider_scope_association.c.forge_api_key_id == db_api_key.id
+        )
+    )
+
     await db.commit()
 
     await invalidate_user_cache_async(key_to_invalidate)
@@ -198,7 +210,7 @@ async def _regenerate_api_key_internal(
     result = await db.execute(
         select(ForgeApiKey)
         .options(selectinload(ForgeApiKey.allowed_provider_keys))
-        .filter(ForgeApiKey.id == key_id, ForgeApiKey.user_id == current_user.id)
+        .filter(ForgeApiKey.id == key_id, ForgeApiKey.user_id == current_user.id, ForgeApiKey.deleted_at == None)
     )
     db_api_key = result.scalar_one_or_none()
     

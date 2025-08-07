@@ -504,7 +504,7 @@ async def warm_cache_async(db: AsyncSession) -> None:
         # Get user's Forge API keys
         result = await db.execute(
             select(ForgeApiKey)
-            .filter(ForgeApiKey.user_id == user.id, ForgeApiKey.is_active)
+            .filter(ForgeApiKey.user_id == user.id, ForgeApiKey.is_active, ForgeApiKey.deleted_at == None)
         )
         forge_api_keys = result.scalars().all()
         

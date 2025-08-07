@@ -61,17 +61,21 @@ class CohereAdapter(ProviderAdapter):
                 return models
 
     @staticmethod
-    def convert_usage_data(usage_metadata: dict[str, Any]) -> dict[str, Any]:
+    def convert_usage_data(usage_data: dict[str, Any]) -> dict[str, Any]:
         """Convert Cohere usage data to OpenAI format"""
-        # cohere only billed a specific amount of tokens
-        usage_metadata = usage_metadata or {}
-        billed_tokens = usage_metadata.get("billed_units", {})
-        prompt_tokens = billed_tokens.get("input_tokens", 0)
-        completion_tokens = billed_tokens.get("output_tokens", 0)
+        if not usage_data:
+            return None
+
+        billed_units = usage_data.get("billed_units", {})
+        tokens = usage_data.get("tokens", {})
+
+        # prefer billed_units over tokens
+        input_tokens = billed_units.get("input_tokens") or tokens.get("input_tokens") or 0
+        output_tokens = billed_units.get("output_tokens") or tokens.get("output_tokens") or 0
         return {
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": prompt_tokens + completion_tokens,
+            "prompt_tokens": input_tokens,
+            "completion_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
         }
 
     def _convert_cohere_to_openai(
@@ -111,9 +115,11 @@ class CohereAdapter(ProviderAdapter):
         ]
 
         # Set usage estimates if available
-        usage_metadata = cohere_response.get("usage", {})
-        if usage_metadata:
-            openai_response["usage"] = self.convert_usage_data(usage_metadata)
+        # NOTE: The usage key should be usage instead of meta
+        # The doc is wrong: https://docs.cohere.com/docs/chat-api#response-structure
+        usage_data = self.convert_usage_data(cohere_response.get("usage", {}))
+        if usage_data:
+            openai_response["usage"] = usage_data
 
         return openai_response
 
@@ -121,6 +127,7 @@ class CohereAdapter(ProviderAdapter):
         self, api_key: str, payload: dict[str, Any]
     ) -> AsyncGenerator[bytes, None]:
         """Stream a completion request using Cohere API"""
+        # https://docs.cohere.com/docs/streaming
         model = payload["model"]
         try:
             url = f"{self._base_url}/v2/chat"
@@ -145,7 +152,6 @@ class CohereAdapter(ProviderAdapter):
                 # Track the message ID for consistency
                 message_id = None
                 created = int(time.time())
-                final_usage_data = None
                 async for chunk in response.content.iter_chunks():
                     if not chunk[0]:  # Skip empty chunks
                         continue
@@ -190,6 +196,7 @@ class CohereAdapter(ProviderAdapter):
                                 )
 
                             openai_chunk = None
+                            usage_data = None
                             # Convert to OpenAI format based on chunk type
                             if chunk_type == "message-start":
                                 openai_chunk = {
@@ -250,11 +257,6 @@ class CohereAdapter(ProviderAdapter):
                                 finish_reason = cohere_chunk.get("delta", {}).get(
                                     "finish_reason", "stop"
                                 )
-                                usage_metadata = cohere_chunk.get("usage", {})
-                                if usage_metadata:
-                                    final_usage_data = self.convert_usage_data(
-                                        usage_metadata
-                                    )
 
                                 openai_chunk = {
                                     "id": message_id,
@@ -269,25 +271,32 @@ class CohereAdapter(ProviderAdapter):
                                         }
                                     ],
                                 }
+                            
+                            if 'usage' in cohere_chunk:
+                                usage_data = self.convert_usage_data(cohere_chunk['usage'])
 
                             if openai_chunk:
+                                if usage_data:
+                                    openai_chunk["usage"] = usage_data
                                 yield f"data: {json.dumps(openai_chunk)}\n\n".encode()
+                            elif usage_data:
+                                # Normally, only message-end event type has usage data. And we would yield a openai_chunk with usage data.
+                                # This is just in case
+                                usage_chunk = {
+                                    "id": message_id or uuid.uuid4(),
+                                    "object": "chat.completion.chunk",
+                                    "created": created,
+                                    "model": model,
+                                    "choices": [{"index": 0, "delta": {}}],
+                                    "usage": usage_data,
+                                }
+                                yield f"data: {json.dumps(usage_chunk)}\n\n".encode()
                     except json.JSONDecodeError:
                         logger.warning(f"Failed to parse Cohere chunk: {chunk[0]}")
                         continue
                     except Exception as e:
                         logger.error(f"Error processing Cohere chunk: {e}")
                         continue
-                if final_usage_data:
-                    usage_chunk = {
-                        "id": message_id or uuid.uuid4(),
-                        "object": "chat.completion.chunk",
-                        "created": created,
-                        "model": model,
-                        "choices": [],
-                        "usage": final_usage_data,
-                    }
-                    yield f"data: {json.dumps(usage_chunk)}\n\n".encode()
 
                 # # Send final [DONE] message
                 yield b"data: [DONE]\n\n"
