@@ -139,19 +139,6 @@ class ProviderService:
             ProviderService._adapters_cache = ProviderAdapterFactory.get_all_adapters()
         return ProviderService._adapters_cache
 
-    def _ensure_model_mapping_dict(self, model_mapping: Any) -> dict[str, Any]:
-        """Ensure model_mapping is a dictionary, handling cases where it might be a string."""
-        if isinstance(model_mapping, dict):
-            return model_mapping
-        elif isinstance(model_mapping, str):
-            try:
-                import json
-                return json.loads(model_mapping) if model_mapping else {}
-            except (json.JSONDecodeError, TypeError):
-                return {}
-        else:
-            return {}
-
     async def _load_provider_keys(self) -> dict[str, dict[str, Any]]:
         """Load all provider keys for the user synchronously, with lazy loading and caching."""
         if self._keys_loaded:
@@ -182,7 +169,7 @@ class ProviderService:
 
         keys = {}
         for provider_key in provider_key_records:
-            model_mapping = self._ensure_model_mapping_dict(provider_key.model_mapping or {})
+            model_mapping = provider_key.model_mapping or {}
 
             keys[provider_key.provider_name] = {
                 "api_key": decrypt_api_key(provider_key.encrypted_api_key),
@@ -234,7 +221,7 @@ class ProviderService:
 
         keys = {}
         for provider_key in provider_key_records:
-            model_mapping = self._ensure_model_mapping_dict(provider_key.model_mapping or {})
+            model_mapping = provider_key.model_mapping or {}
 
             keys[provider_key.provider_name] = {
                 "api_key": decrypt_api_key(provider_key.encrypted_api_key),
@@ -298,7 +285,7 @@ class ProviderService:
 
         provider_data = self.provider_keys[matching_provider]
 
-        model_mapping = self._ensure_model_mapping_dict(provider_data.get("model_mapping", {}))
+        model_mapping = provider_data.get("model_mapping", {})
         mapped_model = model_mapping.get(model_name, model_name)
         return (
             matching_provider,
@@ -321,7 +308,7 @@ class ProviderService:
 
         # Check custom model mappings
         for provider_name, provider_data in sorted_providers:
-            model_mapping = self._ensure_model_mapping_dict(provider_data.get("model_mapping", {}))
+            model_mapping = provider_data.get("model_mapping", {})
             if model in model_mapping:
                 mapped_model = model_mapping[model]
                 return (
@@ -382,8 +369,7 @@ class ProviderService:
 
             # Create a cache key unique to this provider config
             base_url = provider_data.get("base_url", "default")
-            model_mapping = self._ensure_model_mapping_dict(provider_data.get("model_mapping", {}))
-            cache_key = f"{base_url}:{hash(frozenset(model_mapping.items()))}"
+            cache_key = f"{base_url}:{hash(frozenset(provider_data.get('model_mapping', {}).items()))}"
 
             # Check if we have cached models for this provider
             cached_models = await self.get_cached_models(provider_name, cache_key)
@@ -401,7 +387,7 @@ class ProviderService:
             ) -> list[dict[str, Any]]:
                 try:
                     model_names = await adapter.list_models(api_key)
-                    model_mapping = self._ensure_model_mapping_dict(provider_data.get("model_mapping", {}))
+                    model_mapping = provider_data.get("model_mapping", {})
                     reverse_model_mapping = {v: k for k, v in model_mapping.items()}
                     provider_models = [
                         {
