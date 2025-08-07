@@ -1,6 +1,7 @@
 import asyncio
 import json
 import time
+import uuid
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 from typing import Any
@@ -46,6 +47,18 @@ class VertexAdapter(ProviderAdapter):
         self.validate_config(config)
         self.publisher = config.get("publisher", "anthropic").lower()
         self.location = config["location"].lower()
+
+        # ------------------------------------------------------------------
+        # Build the Vertex API endpoint based on the location.
+        # If the location is "global", use the default domain without the
+        # region prefix. Otherwise, prefix the domain with the region.
+        #   global   -> https://aiplatform.googleapis.com
+        #   us-east1 -> https://us-east1-aiplatform.googleapis.com
+        # ------------------------------------------------------------------
+        if self.location == "global":
+            self._base_url = "https://aiplatform.googleapis.com"
+        else:
+            self._base_url = f"https://{self.location}-aiplatform.googleapis.com"
     
     @staticmethod
     def validate_api_key(api_key: str):
@@ -210,6 +223,8 @@ class VertexAdapter(ProviderAdapter):
         anthropic_payload["anthropic_version"] = "vertex-2023-10-16"
         del anthropic_payload["model"]
 
+        logger.debug(f"Vertex API request - model: {model_name}, streaming: {streaming}, publisher: {self.publisher}, location: {self.location}")
+
         def error_handler(error_text: str, http_status: int):
             try:
                 error_json = json.loads(error_text)
@@ -223,19 +238,12 @@ class VertexAdapter(ProviderAdapter):
             # https://cloud.google.com/vertex-ai/docs/reference/rest/v1/projects.locations.endpoints/streamRawPredict
             # vertex doesn't do actual streaming, it just returns a stream of json objects
             url = f"{self._base_url}/v1/projects/{self.project_id}/locations/{self.location}/publishers/{self.publisher}/models/{model_name}:streamRawPredict"
-            async def custom_stream_response(url, headers, anthropic_payload, model_name):
-                async def stream_response() -> AsyncGenerator[bytes, None]:
-                    resp = await AnthropicAdapter.process_regular_response(url, headers, anthropic_payload, model_name, error_handler)
-                    resp['object'] = 'chat.completion.chunk'
-                    for choice in resp['choices']:
-                        choice['delta'] = choice['message']
-                        del choice['message']
-                    yield f"data: {json.dumps(resp)}\n\n".encode()
-                    yield b"data: [DONE]\n\n"
-                return stream_response()
-            return await custom_stream_response(url, headers, anthropic_payload, model_name)
+            logger.debug(f"Vertex streaming URL: {url}")
+            # Use the same streaming response handling as Anthropic adapter
+            return await AnthropicAdapter.stream_anthropic_response(url, headers, anthropic_payload, model_name, error_handler)
         else:
             url = f"{self._base_url}/v1/projects/{self.project_id}/locations/{self.location}/publishers/{self.publisher}/models/{model_name}:rawPredict"
+            logger.debug(f"Vertex non-streaming URL: {url}")
             return await AnthropicAdapter.process_regular_response(url, headers, anthropic_payload, model_name, error_handler)
     
     async def process_embeddings(self, payload: dict[str, Any]) -> Any:
