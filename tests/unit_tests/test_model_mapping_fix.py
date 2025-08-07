@@ -235,7 +235,7 @@ class TestModelMappingFix:
         ps._keys_loaded = True
         
         # Test that it works correctly
-        provider_name, mapped_model, base_url = ps._get_provider_info_with_prefix(
+        provider_name, mapped_model, base_url, _ = ps._get_provider_info_with_prefix(
             "openai", "custom-gpt", "openai/custom-gpt"
         )
         
@@ -258,7 +258,7 @@ class TestModelMappingFix:
         ps._keys_loaded = True
         
         # Test that it works correctly
-        provider_name, mapped_model, base_url = ps._find_provider_for_unprefixed_model("custom-gpt")
+        provider_name, mapped_model, base_url, _ = ps._find_provider_for_unprefixed_model("custom-gpt")
         
         assert provider_name == "openai"
         assert mapped_model == "gpt-4"  # Should be mapped correctly
