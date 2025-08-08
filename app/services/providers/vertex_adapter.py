@@ -217,7 +217,7 @@ class VertexAdapter(ProviderAdapter):
 
         streaming = payload.get("stream", False)
         model_name = payload["model"]
-        anthropic_payload = AnthropicAdapter.convert_openai_payload_to_anthropic(payload)
+        anthropic_payload = await AnthropicAdapter.convert_openai_payload_to_anthropic(payload, allow_url_download=True)
 
         # vertex specific payload
         anthropic_payload["anthropic_version"] = "vertex-2023-10-16"
@@ -226,13 +226,14 @@ class VertexAdapter(ProviderAdapter):
         logger.debug(f"Vertex API request - model: {model_name}, streaming: {streaming}, publisher: {self.publisher}, location: {self.location}")
 
         def error_handler(error_text: str, http_status: int):
+            logger.error(f"Vertex API error - code: {http_status}, message: {error_text}")
             try:
                 error_json = json.loads(error_text)
                 error_message = error_json.get("error", {}).get("message", "Unknown error")
                 error_code = error_json.get("error", {}).get("code", http_status)
-                raise ProviderAPIException("Vertex", error_code, error_message)
             except Exception:
                 raise ProviderAPIException("Vertex", http_status, error_text)
+            raise ProviderAPIException("Vertex", error_code, error_message)
 
         if streaming:
             # https://cloud.google.com/vertex-ai/docs/reference/rest/v1/projects.locations.endpoints/streamRawPredict
