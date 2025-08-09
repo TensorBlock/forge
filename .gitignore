@@ -56,3 +56,6 @@ venv.bak/
 # Performance test results
 tests/performance/results/
 .coverage*
+
+# Local test script
+tools/local_test_script.py

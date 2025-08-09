@@ -15,6 +15,7 @@ from app.api.routes import (
     claude_code,
     provider_keys,
     proxy,
+    statistic,
     stats,
     users,
     webhooks,
@@ -167,6 +168,7 @@ def create_app() -> FastAPI:
     v1_router.include_router(proxy.router, tags=["proxy"])
     v1_router.include_router(stats.router, prefix="/stats", tags=["stats"])
     v1_router.include_router(webhooks.router, prefix="/webhooks", tags=["webhooks"])
+    v1_router.include_router(statistic.router, prefix='/statistic', tags=["statistic"])
     # Claude Code compatible API endpoints
     v1_router.include_router(claude_code.router, tags=["Claude Code API"])
 
