@@ -33,8 +33,6 @@ class GeminiOpenAIAdapter(OpenAIAdapter):
         if not base_url.endswith("/openai"):
             base_url = f"{base_url}/openai"
 
-        logger.debug(
-            "Initialised GeminiOpenAIAdapter with base_url=%s", base_url
-        )
+        logger.debug(f"Initialised GeminiOpenAIAdapter with base_url={base_url}")
 
         super().__init__(provider_name, base_url, config=config or {}) 

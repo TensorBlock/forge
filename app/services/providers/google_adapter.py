@@ -8,7 +8,6 @@ wraps the same functionality via the standardized REST surface.
 and for reference while migrating any bespoke features that haven’t yet been
 replicated in the new adapter. **It will be removed in a future release.**
 """
-import asyncio
 import json
 import os
 import time

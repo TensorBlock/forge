@@ -12,6 +12,7 @@ from app.exceptions.exceptions import (
     ProviderAPIException,
     InvalidCompletionRequestException,
 )
+from app.utils.translator import download_image_url
 
 from .base import ProviderAdapter
 
@@ -57,11 +58,22 @@ class AnthropicAdapter(ProviderAdapter):
         }
     
     @staticmethod
-    def convert_openai_image_content_to_anthropic(
-        msg: dict[str, Any],
+    async def convert_openai_image_content_to_anthropic(
+        msg: dict[str, Any], allow_url_download: bool = False
     ) -> dict[str, Any]:
         """Convert OpenAI image content to Anthropic image content"""
         data_url = msg["image_url"]["url"]
+        if allow_url_download:
+            try:
+                data_url = await download_image_url(logger, data_url)
+            except Exception as e:
+                logger.exception(f"Error downloading image: {e}")
+                raise ProviderAPIException(
+                    provider_name="anthropic",
+                    error_code=400,
+                    error_message=f"Error downloading image: {e}",
+                )
+
         if data_url.startswith("data:"):
             # Extract media type and base64 data
             parts = data_url.split(",", 1)
@@ -115,8 +127,9 @@ class AnthropicAdapter(ProviderAdapter):
         
 
     @staticmethod
-    def convert_openai_content_to_anthropic(
+    async def convert_openai_content_to_anthropic(
         content: list[dict[str, Any]] | str | None,
+        allow_url_download: bool = False,
     ) -> list[dict[str, Any]] | str:
         """Convert OpenAI content model to Anthropic content model"""
         if content is None:
@@ -138,7 +151,7 @@ class AnthropicAdapter(ProviderAdapter):
                 result.append({"type": "text", "text": msg.get("text", "")})
             elif _type == "image_url":
                 result.append(
-                    AnthropicAdapter.convert_openai_image_content_to_anthropic(msg)
+                    await AnthropicAdapter.convert_openai_image_content_to_anthropic(msg, allow_url_download=allow_url_download)
                 )
             else:
                 error_message = f"{_type} is not supported"
@@ -189,7 +202,7 @@ class AnthropicAdapter(ProviderAdapter):
             return models
 
     @staticmethod
-    def convert_openai_payload_to_anthropic(payload: dict[str, Any]) -> dict[str, Any]:
+    async def convert_openai_payload_to_anthropic(payload: dict[str, Any], allow_url_download: bool = False) -> dict[str, Any]:
         """Convert OpenAI completion payload to Anthropic format"""
         anthropic_payload = {
             "model": payload["model"],
@@ -319,7 +332,7 @@ class AnthropicAdapter(ProviderAdapter):
                     anthropic_content = content
                 else:
                     anthropic_content = (
-                        AnthropicAdapter.convert_openai_content_to_anthropic(content)
+                        await AnthropicAdapter.convert_openai_content_to_anthropic(content, allow_url_download=allow_url_download)
                     )
 
                 anthropic_message = {"role": role, "content": anthropic_content}
@@ -399,7 +412,7 @@ class AnthropicAdapter(ProviderAdapter):
 
         streaming = payload.get("stream", False)
         # Convert OpenAI format to Anthropic format
-        anthropic_payload = self.convert_openai_payload_to_anthropic(payload)
+        anthropic_payload = await self.convert_openai_payload_to_anthropic(payload)
 
         # Choose the appropriate API endpoint - using ternary operator
         api_endpoint = "messages" if "messages" in anthropic_payload else "complete"
