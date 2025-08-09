@@ -1,0 +1,282 @@
+/* Forge TUI Styles - Clean Version */
+
+Screen {
+    background: $surface;
+    color: $text;
+}
+
+/* Header and Footer */
+Header {
+    height: 1;
+    max-height: 1;
+    dock: top;
+    background: $primary;
+    color: $text-primary;
+}
+
+Footer {
+    height: 1;
+    max-height: 1;
+    dock: bottom;
+    background: $surface-lighten-1;
+}
+
+.header-container {
+    height: 1;
+    dock: top;
+}
+
+.exit-btn {
+    width: 8;
+    height: 1;
+    dock: right;
+    margin: 0 1 0 0;
+}
+
+/* Tab Styling */
+.tab-title {
+    text-style: bold;
+    color: $accent;
+    margin: 1;
+    text-align: center;
+}
+
+.section-title {
+    text-style: bold;
+    color: $secondary;
+    margin: 0 0 1 0;
+    border-bottom: solid $primary;
+    padding-bottom: 1;
+}
+
+/* Button Groups */
+.auth-buttons, 
+.key-buttons, 
+.provider-buttons, 
+.test-buttons {
+    height: 3;
+    margin: 1 0;
+    dock: top;
+}
+
+/* Testing Tab Layout */
+.testing-main {
+    height: 65%;
+    margin: 1 0;
+}
+
+.testing-inputs {
+    width: 45%;
+    border: solid $primary;
+    margin-right: 1;
+    max-height: 100%;
+}
+
+.testing-models {
+    width: 55%;
+    border: solid $primary;
+    max-height: 100%;
+}
+
+.testing-results {
+    height: 30%;
+    margin: 1 0;
+    border: solid $primary;
+    max-height: 100%;
+}
+
+.input-label {
+    height: 1;
+    margin: 0 0 0 0;
+    text-style: bold;
+    color: $secondary;
+}
+
+.models-scroll, .results-scroll {
+    height: 100%;
+    margin: 0;
+    padding: 1;
+}
+
+.inputs-scroll {
+    height: 100%;
+    margin: 0;
+    padding: 1;
+}
+
+/* Compact Input Fields */
+Input {
+    height: 3;
+    margin: 0 0 1 0;
+    border: solid $primary;
+    background: $surface;
+}
+
+Input:focus {
+    border: solid $accent;
+}
+
+TextArea {
+    height: 5;
+    margin: 1 0;
+    border: solid $primary;
+    background: $surface;
+}
+
+TextArea:focus {
+    border: solid $accent;
+}
+
+/* Button styling */
+Button {
+    height: 3;
+    min-width: 12;
+    margin: 0 1;
+}
+
+Button.primary {
+    background: $primary;
+    color: $text-primary;
+}
+
+Button.success {
+    background: $success;
+    color: $text-success;
+}
+
+Button.warning {
+    background: $warning;
+    color: $text-warning;
+}
+
+Button.error {
+    background: $error;
+    color: $text-error;
+}
+
+Button:hover {
+    text-style: bold;
+}
+
+/* Data Tables */
+DataTable {
+    height: 15;
+    margin: 1 0;
+    border: solid $primary;
+    background: $surface;
+}
+
+DataTable > .datatable--header {
+    background: $primary;
+    color: $text-primary;
+    text-style: bold;
+}
+
+DataTable > .datatable--cursor {
+    background: $accent 20%;
+}
+
+DataTable:focus {
+    border: solid $accent;
+}
+
+/* Modal dialogs */
+#login-dialog, #register-dialog, #api-key-dialog, #provider-dialog, #action-dialog, #show-key-dialog {
+    width: 60;
+    height: auto;
+    min-height: 15;
+    border: thick $primary;
+    background: $surface;
+    margin: 2;
+    padding: 1;
+}
+
+#login-title, #register-title, #api-key-title, #provider-title, #action-title, #show-key-title {
+    width: 100%;
+    text-align: center;
+    color: $primary;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+.warning {
+    color: $warning;
+    text-style: bold;
+    margin: 1 0;
+    text-align: center;
+}
+
+/* Status display */
+#auth-status {
+    margin: 1 0;
+    padding: 1;
+    border: solid $primary;
+    background: $surface;
+    text-align: center;
+    min-height: 3;
+}
+
+/* Scrollable containers */
+ScrollableContainer {
+    border: none;
+    background: $surface;
+}
+
+/* Make disabled inputs more visible */
+Input:disabled {
+    opacity: 1;
+    background: $surface-lighten-1;
+    border: solid $primary;
+}
+
+/* Layout Containers */
+Horizontal {
+    height: auto;
+}
+
+Vertical {
+    width: 100%;
+}
+
+/* Loading States */
+LoadingIndicator {
+    color: $accent;
+}
+
+/* Status Messages */
+.success-message {
+    background: $success;
+    color: $text-success;
+    padding: 1;
+    margin: 1 0;
+}
+
+.error-message {
+    background: $error;
+    color: $text-error;
+    padding: 1;
+    margin: 1 0;
+}
+
+.info-message {
+    background: $primary;
+    color: $text-primary;
+    padding: 1;
+    margin: 1 0;
+}
+
+/* Special Elements */
+.api-key-display {
+    background: $surface-lighten-1;
+    border: solid $accent;
+    padding: 1;
+    margin: 1 0;
+}
+
+.provider-config {
+    background: $surface-lighten-1;
+    border: solid $secondary;
+    padding: 1;
+    margin: 1 0;
+    max-height: 8;
+}
