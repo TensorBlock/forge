@@ -126,12 +126,6 @@ async def update_user_me(
     db.add(current_user)
     await db.commit()
     await db.refresh(current_user)
-    invalidate_user_cache(
-        current_user.id
-    )  # Assuming user_id is the cache key for user object
-    # If API key was part of user model directly and changed, invalidate its cache too.
-    # However, API keys are now separate, so user update doesn't directly affect API key string caches
-    # unless an API key string was derived directly from user fields that changed.
     return current_user
 
 

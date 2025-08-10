@@ -51,7 +51,7 @@ class UsageSummaryResponse(BaseModel):
         return v.isoformat()
 
 
-class ForgeKeyUsageSummaryResponse(BaseModel):
+class ForgeKeysUsageSummaryResponse(BaseModel):
     forge_key: str
     tokens: int
 

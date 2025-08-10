@@ -5,7 +5,7 @@ from sqlalchemy.sql.functions import coalesce
 from datetime import datetime, timedelta, UTC
 from enum import StrEnum
 
-from app.api.dependencies import get_async_db, get_current_active_user
+from app.api.dependencies import get_async_db, get_current_active_user, get_current_active_user_from_clerk
 from app.models.user import User
 from app.models.usage_tracker import UsageTracker
 from app.models.provider_key import ProviderKey
@@ -13,7 +13,7 @@ from app.models.forge_api_key import ForgeApiKey
 from app.api.schemas.statistic import (
     UsageRealtimeResponse,
     UsageSummaryResponse,
-    ForgeKeyUsageSummaryResponse,
+    ForgeKeysUsageSummaryResponse,
 )
 
 router = APIRouter()
@@ -78,6 +78,16 @@ async def get_usage_realtime(
     print(usage_stats)
 
     return [UsageRealtimeResponse(**usage_stat) for usage_stat in usage_stats]
+
+@router.get("/usage/realtime/clerk", response_model=list[UsageRealtimeResponse])
+async def get_usage_realtime_clerk(
+    current_user: User = Depends(get_current_active_user_from_clerk),
+    db: AsyncSession = Depends(get_async_db),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(10, ge=1),
+):
+    return await get_usage_realtime(current_user, db, offset, limit)
+
 
 
 class UsageSummaryTimeSpan(StrEnum):
@@ -151,7 +161,16 @@ async def get_usage_summary(
     ]
 
 
-class ForgeKeyUsageTimeSpan(StrEnum):
+@router.get("/usage/summary/clerk", response_model=list[UsageSummaryResponse])
+async def get_usage_summary_clerk(
+    current_user: User = Depends(get_current_active_user_from_clerk),
+    db: AsyncSession = Depends(get_async_db),
+    span: UsageSummaryTimeSpan = Query(UsageSummaryTimeSpan.week),
+):
+    return await get_usage_summary(current_user, db, span)
+
+
+class ForgeKeysUsageTimeSpan(StrEnum):
     day = "day"
     week = "week"
     month = "month"
@@ -159,23 +178,23 @@ class ForgeKeyUsageTimeSpan(StrEnum):
     all = "all"
 
 
-@router.get("/forge-key/usage", response_model=list[ForgeKeyUsageSummaryResponse])
-async def get_forge_key_usage(
+@router.get("/forge-keys/usage", response_model=list[ForgeKeysUsageSummaryResponse])
+async def get_forge_keys_usage(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_async_db),
-    span: ForgeKeyUsageTimeSpan = Query(ForgeKeyUsageTimeSpan.week),
+    span: ForgeKeysUsageTimeSpan = Query(ForgeKeysUsageTimeSpan.week),
 ):
     """
     Get usage summary for all the forge keys for the past day/week/month/year/all
     """
     start_time = None
-    if span == ForgeKeyUsageTimeSpan.day:
+    if span == ForgeKeysUsageTimeSpan.day:
         start_time = datetime.now(UTC) - timedelta(days=1)
-    elif span == ForgeKeyUsageTimeSpan.week:
+    elif span == ForgeKeysUsageTimeSpan.week:
         start_time = datetime.now(UTC) - timedelta(weeks=1)
-    elif span == ForgeKeyUsageTimeSpan.month:
+    elif span == ForgeKeysUsageTimeSpan.month:
         start_time = datetime.now(UTC) - timedelta(days=30)
-    elif span == ForgeKeyUsageTimeSpan.year:
+    elif span == ForgeKeysUsageTimeSpan.year:
         start_time = datetime.now(UTC) - timedelta(days=365)
 
     query = (
@@ -198,6 +217,15 @@ async def get_forge_key_usage(
     rows = result.fetchall()
 
     return [
-        ForgeKeyUsageSummaryResponse(forge_key=row.forge_key, tokens=row.tokens)
+        ForgeKeysUsageSummaryResponse(forge_key=row.forge_key, tokens=row.tokens)
         for row in rows
     ]
+
+
+@router.get("/forge-keys/usage/clerk", response_model=list[ForgeKeysUsageSummaryResponse])
+async def get_forge_keys_usage_clerk(
+    current_user: User = Depends(get_current_active_user_from_clerk),
+    db: AsyncSession = Depends(get_async_db),
+    span: ForgeKeysUsageTimeSpan = Query(ForgeKeysUsageTimeSpan.week),
+):
+    return await get_forge_keys_usage(current_user, db, span)
