@@ -13,7 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.async_cache import async_provider_service_cache, DEBUG_CACHE
 from app.core.logger import get_logger
 from app.core.security import decrypt_api_key, encrypt_api_key
-from app.exceptions.exceptions import InvalidProviderException, BaseInvalidRequestException, InvalidForgeKeyException
+from app.exceptions.exceptions import (
+    InvalidProviderException,
+    BaseInvalidRequestException,
+    InvalidForgeKeyException,
+)
 from app.models.user import User
 from app.core.database import get_db_session
 
@@ -26,9 +30,16 @@ logger = get_logger(name="provider_service")
 # Add constants at the top of the file, after imports
 MODEL_PARTS_MIN_LENGTH = 2  # Minimum number of parts in a model name (e.g., "gpt-4")
 
+
 # Create a background task to update the usage tracker that won't be cancelled
 # Even if the streaming response is cancelled by client disconnect
-async def update_usage_in_background(usage_tracker_id: uuid.UUID, input_tokens: int, output_tokens: int, cached_tokens: int, reasoning_tokens: int):
+async def update_usage_in_background(
+    usage_tracker_id: uuid.UUID,
+    input_tokens: int,
+    output_tokens: int,
+    cached_tokens: int,
+    reasoning_tokens: int,
+):
     # Use a fresh DB session for logging, since the original request session
     # may have been closed by FastAPI after the response was returned.
 
@@ -41,6 +52,7 @@ async def update_usage_in_background(usage_tracker_id: uuid.UUID, input_tokens: 
             cached_tokens=cached_tokens,
             reasoning_tokens=reasoning_tokens,
         )
+
 
 class ProviderService:
     """Service for handling provider API calls.
@@ -86,7 +98,9 @@ class ProviderService:
         self._keys_loaded = False
 
     @classmethod
-    async def async_get_instance(cls, user: User, db: AsyncSession, api_key_id: int | None = None) -> "ProviderService":
+    async def async_get_instance(
+        cls, user: User, db: AsyncSession, api_key_id: int | None = None
+    ) -> "ProviderService":
         """Get a cached instance of ProviderService for a user or create a new one (async version)"""
 
         cache_key = f"provider_service:{user.id}"
@@ -182,8 +196,12 @@ class ProviderService:
         # Query ProviderKey directly by user_id
         from app.models.provider_key import ProviderKey
 
-        result = await self.db.execute(select(ProviderKey).filter(ProviderKey.user_id == self.user_id, ProviderKey.deleted_at == None))
-        provider_key_records  = result.scalars().all()
+        result = await self.db.execute(
+            select(ProviderKey).filter(
+                ProviderKey.user_id == self.user_id, ProviderKey.deleted_at == None
+            )
+        )
+        provider_key_records = result.scalars().all()
 
         keys = {}
         for provider_key in provider_key_records:
@@ -204,7 +222,9 @@ class ProviderService:
             logger.debug(
                 f"Caching provider keys for user {self.user_id} (TTL: 3600s) (sync)"
             )
-        await async_provider_service_cache.set(cache_key, keys, ttl=3600)  # Cache for 1 hour
+        await async_provider_service_cache.set(
+            cache_key, keys, ttl=3600
+        )  # Cache for 1 hour
 
         return keys
 
@@ -233,7 +253,11 @@ class ProviderService:
         # Query ProviderKey directly by user_id
         from app.models.provider_key import ProviderKey
 
-        result = await self.db.execute(select(ProviderKey).filter(ProviderKey.user_id == self.user_id, ProviderKey.deleted_at == None))
+        result = await self.db.execute(
+            select(ProviderKey).filter(
+                ProviderKey.user_id == self.user_id, ProviderKey.deleted_at == None
+            )
+        )
         provider_key_records = result.scalars().all()
 
         keys = {}
@@ -261,36 +285,79 @@ class ProviderService:
 
         return keys
 
-    def _extract_provider_name_prefix(self, model: str) -> tuple[str | None, str]:
+    def _extract_provider_name_prefix(
+        self, model: str, allowed_provider_names: list[str] | set[str] | None = None
+    ) -> tuple[str | None, str]:
         """
         Extracts a provider name prefix from the model name if it exists.
         Returns (provider_prefix, model_name_without_prefix)
+
+        Args:
+            model: The model name to extract provider prefix from
+            allowed_provider_names: Optional list/set of allowed provider names for security scope.
+                                   If provided, only checks against these providers (which are already
+                                   the intersection of user's provider keys and API key scope).
+                                   If None, checks against user's provider keys.
         """
-        all_provider_names = {
-            p.lower() for p in ProviderAdapterFactory.get_all_adapters().keys()
-        }
-        model_parts = model.split("/")
+        # Determine which provider names to check against
+        if not self._keys_loaded:
+            return None, model
 
-        # Find the longest matching provider name from the start of the model string
-        for i in range(len(model_parts), 0, -1):
-            potential_provider = "/".join(model_parts[:i]).lower()
-            if potential_provider in all_provider_names:
-                # If the provider name is the entire model string, and it has only one part,
-                # then we should treat it as a model name, not a provider prefix.
-                # e.g. model name is "openai", we shouldn't parse it as provider "openai" and empty model.
-                is_entire_model_string = i == len(model_parts)
-                if is_entire_model_string and len(model_parts) == 1:
-                    continue  # Skip, treat as model name
+        # Get user's available provider names
+        user_provider_names = {p.lower() for p in self.provider_keys.keys()}
 
-                provider_name = potential_provider
-                model_name_without_prefix = "/".join(model_parts[i:])
-                return provider_name, model_name_without_prefix
+        if allowed_provider_names:
+            # allowed_provider_names is already the intersection of user's provider keys and API key scope
+            # (determined by the forge_api_key_provider_scope_association table)
+            allowed_providers_lower = {p.lower() for p in allowed_provider_names}
+
+            # Use the optimized approach with allowed providers
+            model_lower = model.lower()
+
+            # Sort providers by length (longest first) to avoid substring conflicts
+            # e.g., "openai-custom" should match before "openai"
+            sorted_providers = sorted(allowed_providers_lower, key=len, reverse=True)
+
+            for provider in sorted_providers:
+                # Check if provider is at the start of the model string
+                if model_lower.startswith(provider + "/"):
+                    # Find the original case from allowed_provider_names
+                    original_provider = next(
+                        p for p in allowed_provider_names if p.lower() == provider
+                    )
+
+                    # Extract the model name without prefix
+                    prefix_length = len(provider) + 1  # +1 for the "/"
+                    model_name_without_prefix = model[prefix_length:]
+
+                    # Return the provider name in lowercase to match the provider keys
+                    return original_provider.lower(), model_name_without_prefix
+        else:
+            # Use the comprehensive approach checking user's provider keys
+            all_provider_names = user_provider_names
+
+            model_parts = model.split("/")
+
+            # Find the longest matching provider name from the start of the model string
+            for i in range(len(model_parts), 0, -1):
+                potential_provider = "/".join(model_parts[:i]).lower()
+                if potential_provider in all_provider_names:
+                    # If the provider name is the entire model string, and it has only one part,
+                    # then we should treat it as a model name, not a provider prefix.
+                    # e.g. model name is "openai", we shouldn't parse it as provider "openai" and empty model.
+                    is_entire_model_string = i == len(model_parts)
+                    if is_entire_model_string and len(model_parts) == 1:
+                        continue  # Skip, treat as model name
+
+                    provider_name = potential_provider
+                    model_name_without_prefix = "/".join(model_parts[i:])
+                    return provider_name, model_name_without_prefix
 
         return None, model
 
     def _get_provider_info_with_prefix(
         self, provider_name: str, model_name: str, original_model: str
-    ) -> tuple[str, str, str | None]:
+    ) -> tuple[str, str, str | None, int | None]:
         """Handles provider lookup when a prefix is found in the model name."""
         matching_provider = next(
             (key for key in self.provider_keys.keys() if key.lower() == provider_name),
@@ -315,7 +382,7 @@ class ProviderService:
 
     def _find_provider_for_unprefixed_model(
         self, model: str
-    ) -> tuple[str, str, str | None]:
+    ) -> tuple[str, str, str | None, int | None]:
         """Finds a provider for a model that doesn't have a provider prefix."""
         # Prioritize providers whose names are substrings of the model, e.g., "gemini" in "models/gemini-2.0-flash"
         # This helps resolve ambiguity when multiple providers might claim to support a model.
@@ -342,16 +409,22 @@ class ProviderService:
         logger.error(f"No matching provider found for {model}")
         raise InvalidProviderException(model)
 
-    def _get_provider_info(self, model: str) -> tuple[str, str, str | None]:
+    def _get_provider_info(
+        self, model: str, allowed_provider_names: list[str] | set[str] | None = None
+    ) -> tuple[str, str, str | None, int | None]:
         """
         Determine the provider based on the model name.
+        If allowed_provider_names is provided, use optimized lookup for faster performance.
         """
         if not self._keys_loaded:
             error_message = "Provider keys must be loaded before calling _get_provider_info. Call _load_provider_keys_async() first."
             logger.error(error_message)
             raise RuntimeError(error_message)
 
-        provider_name, model_name_no_prefix = self._extract_provider_name_prefix(model)
+        # Use the unified provider name extraction method
+        provider_name, model_name_no_prefix = self._extract_provider_name_prefix(
+            model, allowed_provider_names
+        )
 
         if provider_name:
             return self._get_provider_info_with_prefix(
@@ -426,7 +499,9 @@ class ProviderService:
                     return provider_models
                 except Exception as e:
                     # Use parameterized logging to avoid issues if the error message contains braces
-                    logger.error("Error fetching models for {}: {}", provider_name, str(e))
+                    logger.error(
+                        "Error fetching models for {}: {}", provider_name, str(e)
+                    )
                     return []
 
             provider_adapter_cls = ProviderAdapterFactory.get_adapter_cls(provider_name)
@@ -470,17 +545,20 @@ class ProviderService:
             error_message = "Model is required"
             logger.error(error_message)
             raise BaseInvalidRequestException(
-                provider_name="unknown",
-                error=ValueError(error_message)
+                provider_name="unknown", error=ValueError(error_message)
             )
 
-        provider_name, actual_model, base_url, provider_key_id = self._get_provider_info(model)
+        provider_name, actual_model, base_url, provider_key_id = (
+            self._get_provider_info(model, allowed_provider_names)
+        )
 
         # Enforce scope restriction (case-insensitive).
         if allowed_provider_names is not None and (
             provider_name.lower() not in {p.lower() for p in allowed_provider_names}
         ):
-            error_message = f"API key is not permitted to use provider '{provider_name}'."
+            error_message = (
+                f"API key is not permitted to use provider '{provider_name}'."
+            )
             logger.error(error_message)
             raise InvalidForgeKeyException(error=ValueError(error_message))
 
@@ -493,7 +571,9 @@ class ProviderService:
 
         # Get the provider's API key
         if provider_name not in self.provider_keys:
-            error_message = f"API key is not permitted to use provider '{provider_name}'."
+            error_message = (
+                f"API key is not permitted to use provider '{provider_name}'."
+            )
             logger.error(error_message)
             raise InvalidForgeKeyException(error=ValueError(error_message))
 
@@ -520,8 +600,12 @@ class ProviderService:
         else:
             # TODO: this shouldn't happen, but we handle it gracefully as we don't want to break the flow
             # Dive deeper into this if it ever happens
-            logger.info(f"api_key_id: {self.api_key_id}, provider_key_id: {provider_key_id}")
-            logger.warning("No API key ID or provider key ID found, skipping usage tracking")
+            logger.info(
+                f"api_key_id: {self.api_key_id}, provider_key_id: {provider_key_id}"
+            )
+            logger.warning(
+                "No API key ID or provider key ID found, skipping usage tracking"
+            )
 
         if "completion" in endpoint:
             result = await adapter.process_completion(
@@ -532,7 +616,9 @@ class ProviderService:
         elif "images/generations" in endpoint:
             # TODO: we only support openai for now
             if provider_name != "openai":
-                error_message = f"Unsupported endpoint: {endpoint} for provider {provider_name}"
+                error_message = (
+                    f"Unsupported endpoint: {endpoint} for provider {provider_name}"
+                )
                 logger.error(error_message)
                 raise NotImplementedError(error_message)
             result = await adapter.process_image_generation(
@@ -543,7 +629,9 @@ class ProviderService:
         elif "images/edits" in endpoint:
             # TODO: we only support openai for now
             if provider_name != "openai":
-                error_message = f"Unsupported endpoint: {endpoint} for provider {provider_name}"
+                error_message = (
+                    f"Unsupported endpoint: {endpoint} for provider {provider_name}"
+                )
                 logger.error(error_message)
                 raise NotImplementedError(error_message)
             result = await adapter.process_image_edits(
@@ -580,10 +668,22 @@ class ProviderService:
                 usage = result.get("usage", {})
                 input_tokens = usage.get("prompt_tokens", 0)
                 output_tokens = usage.get("completion_tokens", 0)
-                cached_tokens = usage.get("prompt_tokens_details", {}).get("cached_tokens", 0)
-                reasoning_tokens = usage.get("completion_tokens_details", {}).get("reasoning_tokens", 0)
+                cached_tokens = usage.get("prompt_tokens_details", {}).get(
+                    "cached_tokens", 0
+                )
+                reasoning_tokens = usage.get("completion_tokens_details", {}).get(
+                    "reasoning_tokens", 0
+                )
 
-            asyncio.create_task(update_usage_in_background(usage_tracker_id, input_tokens, output_tokens, cached_tokens, reasoning_tokens))
+            asyncio.create_task(
+                update_usage_in_background(
+                    usage_tracker_id,
+                    input_tokens,
+                    output_tokens,
+                    cached_tokens,
+                    reasoning_tokens,
+                )
+            )
             return result
         else:
             # For streaming responses, wrap the generator to count tokens
@@ -637,14 +737,24 @@ class ProviderService:
                                             f"Found usage data in chunk: {data['usage']}"
                                         )
                                         usage = data.get("usage", {})
-                                        input_tokens += usage.get(
-                                            "prompt_tokens", 0
-                                        ) or 0
-                                        output_tokens += usage.get(
-                                            "completion_tokens", 0
-                                        ) or 0
-                                        cached_tokens += usage.get("prompt_tokens_details", {}).get("cached_tokens", 0) or 0
-                                        reasoning_tokens += usage.get("completion_tokens_details", {}).get("reasoning_tokens", 0) or 0
+                                        input_tokens += (
+                                            usage.get("prompt_tokens", 0) or 0
+                                        )
+                                        output_tokens += (
+                                            usage.get("completion_tokens", 0) or 0
+                                        )
+                                        cached_tokens += (
+                                            usage.get("prompt_tokens_details", {}).get(
+                                                "cached_tokens", 0
+                                            )
+                                            or 0
+                                        )
+                                        reasoning_tokens += (
+                                            usage.get(
+                                                "completion_tokens_details", {}
+                                            ).get("reasoning_tokens", 0)
+                                            or 0
+                                        )
 
                                     # Extract content from the chunk based on OpenAI format
                                     if "choices" in data:
@@ -657,7 +767,9 @@ class ProviderService:
                                                 # Only count tokens if we don't have final usage data
                                                 if content:
                                                     # Count tokens in content (approx)
-                                                    approximate_output_tokens += len(content) // 4
+                                                    approximate_output_tokens += (
+                                                        len(content) // 4
+                                                    )
                                 except json.JSONDecodeError:
                                     # If JSON parsing fails, just continue
                                     pass
@@ -671,7 +783,9 @@ class ProviderService:
 
                 except Exception as e:
                     # Use parameterized logging to avoid issues if the error message contains braces
-                    logger.error("Error in streaming response: {}", str(e), exc_info=True)
+                    logger.error(
+                        "Error in streaming response: {}", str(e), exc_info=True
+                    )
                     # Re-raise to propagate the error
                     raise
                 finally:
@@ -681,12 +795,22 @@ class ProviderService:
                         f"output_tokens={output_tokens}, cached_tokens={cached_tokens}, reasoning_tokens={reasoning_tokens}"
                     )
 
-                    asyncio.create_task(update_usage_in_background(usage_tracker_id, input_tokens or approximate_input_tokens, output_tokens or approximate_output_tokens, cached_tokens, reasoning_tokens))
+                    asyncio.create_task(
+                        update_usage_in_background(
+                            usage_tracker_id,
+                            input_tokens or approximate_input_tokens,
+                            output_tokens or approximate_output_tokens,
+                            cached_tokens,
+                            reasoning_tokens,
+                        )
+                    )
 
             return token_counting_stream()
 
 
-async def create_default_tensorblock_provider_for_user(user_id: int, db: AsyncSession) -> None:
+async def create_default_tensorblock_provider_for_user(
+    user_id: int, db: AsyncSession
+) -> None:
     """
     Create a default TensorBlock provider key for a new user.
     This allows users to use Forge immediately without binding their own API keys.

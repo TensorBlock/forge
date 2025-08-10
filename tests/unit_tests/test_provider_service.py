@@ -50,7 +50,9 @@ class TestProviderService(TestCase):
         self.provider_key_google.provider_name = "gemini"
         self.provider_key_google.encrypted_api_key = "encrypted_gemini_key"
         self.provider_key_google.base_url = None
-        self.provider_key_google.model_mapping = {"test-gemini": "models/gemini-2.0-flash"}
+        self.provider_key_google.model_mapping = {
+            "test-gemini": "models/gemini-2.0-flash"
+        }
 
         self.provider_key_xai = MagicMock(spec=ProviderKey)
         self.provider_key_xai.provider_name = "xai"
@@ -62,7 +64,9 @@ class TestProviderService(TestCase):
         self.provider_key_fireworks.provider_name = "fireworks"
         self.provider_key_fireworks.encrypted_api_key = "encrypted_fireworks_key"
         self.provider_key_fireworks.base_url = None
-        self.provider_key_fireworks.model_mapping = {"test-fireworks": "accounts/fireworks/models/code-llama-7b"}
+        self.provider_key_fireworks.model_mapping = {
+            "test-fireworks": "accounts/fireworks/models/code-llama-7b"
+        }
 
         self.provider_key_openrouter = MagicMock(spec=ProviderKey)
         self.provider_key_openrouter.provider_name = "openrouter"
@@ -86,7 +90,15 @@ class TestProviderService(TestCase):
         self.provider_key_bedrock.provider_name = "bedrock"
         self.provider_key_bedrock.encrypted_api_key = "encrypted_bedrock_key"
         self.provider_key_bedrock.base_url = None
-        self.provider_key_bedrock.model_mapping = {"test-bedrock": "claude-3-5-sonnet-20240620-v1:0"}
+        self.provider_key_bedrock.model_mapping = {
+            "test-bedrock": "claude-3-5-sonnet-20240620-v1:0"
+        }
+
+        self.provider_key_custom = MagicMock(spec=ProviderKey)
+        self.provider_key_custom.provider_name = "custom"
+        self.provider_key_custom.encrypted_api_key = "encrypted_custom_key"
+        self.provider_key_custom.base_url = None
+        self.provider_key_custom.model_mapping = {"xxxx": "custom-model"}
 
         self.user.provider_keys = [
             self.provider_key_openai,
@@ -117,16 +129,21 @@ class TestProviderService(TestCase):
                 "encrypted_fireworks_key": "decrypted_fireworks_key",
                 "encrypted_openrouter_key": "decrypted_openrouter_key",
                 "encrypted_together_key": "decrypted_together_key",
-                "encrypted_azure_key": json.dumps({
-                    "api_key": "decrypted_azure_key",
-                    "api_version": "2025-01-01-preview",
-                }),
-                "encrypted_bedrock_key": json.dumps({
-                    "api_key": "decrypted_bedrock_key",
-                    "region_name": "us-east-1",
-                    "aws_access_key_id": "decrypted_aws_access_key_id",
-                    "aws_secret_access_key": "decrypted_aws_secret_access_key",
-                }),
+                "encrypted_azure_key": json.dumps(
+                    {
+                        "api_key": "decrypted_azure_key",
+                        "api_version": "2025-01-01-preview",
+                    }
+                ),
+                "encrypted_bedrock_key": json.dumps(
+                    {
+                        "api_key": "decrypted_bedrock_key",
+                        "region_name": "us-east-1",
+                        "aws_access_key_id": "decrypted_aws_access_key_id",
+                        "aws_secret_access_key": "decrypted_aws_secret_access_key",
+                    }
+                ),
+                "encrypted_custom_key": "decrypted_custom_key",
             }
             mock_decrypt.side_effect = lambda key: decrypt_key_map[key]
 
@@ -147,9 +164,14 @@ class TestProviderService(TestCase):
                 self.provider_key_together,
                 self.provider_key_azure,
                 self.provider_key_bedrock,
+                self.provider_key_custom,
             ]
-            mock_result.scalars.return_value = mock_scalars  # scalars() returns sync object
-            self.db.execute = AsyncMock(return_value=mock_result)  # Only execute() is async
+            mock_result.scalars.return_value = (
+                mock_scalars  # scalars() returns sync object
+            )
+            self.db.execute = AsyncMock(
+                return_value=mock_result
+            )  # Only execute() is async
 
             self.service = ProviderService(self.user.id, self.db)
 
@@ -177,16 +199,26 @@ class TestProviderService(TestCase):
         self.assertEqual(keys["fireworks"]["api_key"], "decrypted_fireworks_key")
         self.assertEqual(keys["openrouter"]["api_key"], "decrypted_openrouter_key")
         self.assertEqual(keys["together"]["api_key"], "decrypted_together_key")
-        self.assertEqual(keys["azure"]["api_key"], json.dumps({
-            "api_key": "decrypted_azure_key",
-            "api_version": "2025-01-01-preview",
-        }))
-        self.assertEqual(keys["bedrock"]["api_key"], json.dumps({
-            "api_key": "decrypted_bedrock_key",
-            "region_name": "us-east-1",
-            "aws_access_key_id": "decrypted_aws_access_key_id",
-            "aws_secret_access_key": "decrypted_aws_secret_access_key",
-        }))
+        self.assertEqual(
+            keys["azure"]["api_key"],
+            json.dumps(
+                {
+                    "api_key": "decrypted_azure_key",
+                    "api_version": "2025-01-01-preview",
+                }
+            ),
+        )
+        self.assertEqual(
+            keys["bedrock"]["api_key"],
+            json.dumps(
+                {
+                    "api_key": "decrypted_bedrock_key",
+                    "region_name": "us-east-1",
+                    "aws_access_key_id": "decrypted_aws_access_key_id",
+                    "aws_secret_access_key": "decrypted_aws_secret_access_key",
+                }
+            ),
+        )
         self.assertEqual(keys["openai"]["model_mapping"], {"custom-gpt": "gpt-4"})
         self.assertEqual(
             keys["gemini"]["model_mapping"], {"test-gemini": "models/gemini-2.0-flash"}
@@ -195,14 +227,18 @@ class TestProviderService(TestCase):
     async def test_get_provider_info_explicit_mapping(self):
         """Test getting provider info with an explicitly mapped model"""
         # Since keys are already loaded in setUp, _get_provider_info should work directly
-        provider, model, base_url, provider_key_id = self.service._get_provider_info("custom-gpt")
+        provider, model, base_url, provider_key_id = self.service._get_provider_info(
+            "custom-gpt"
+        )
 
         self.assertEqual(provider, "openai")
         self.assertEqual(model, "gpt-4")
         self.assertIsNone(base_url)
         self.assertEqual(provider_key_id, self.provider_key_openai.id)
 
-        provider, model, base_url, provider_key_id = self.service._get_provider_info("test-gemini")
+        provider, model, base_url, provider_key_id = self.service._get_provider_info(
+            "test-gemini"
+        )
 
         self.assertEqual(provider, "gemini")
         self.assertEqual(model, "models/gemini-2.0-flash")
@@ -233,7 +269,9 @@ class TestProviderService(TestCase):
         self.assertEqual(provider_key_id, self.provider_key_google.id)
 
         # Test XAI prefix
-        provider, model, base_url, provider_key_id = self.service._get_provider_info("xai/grok-2-1212")
+        provider, model, base_url, provider_key_id = self.service._get_provider_info(
+            "xai/grok-2-1212"
+        )
         self.assertEqual(provider, "xai")
         self.assertEqual(provider_key_id, self.provider_key_xai.id)
 
@@ -258,13 +296,102 @@ class TestProviderService(TestCase):
         self.assertEqual(provider, "together")
         self.assertEqual(provider_key_id, self.provider_key_together.id)
 
-        provider, model, base_url, provider_key_id = self.service._get_provider_info("azure/gpt-4o")
+        provider, model, base_url, provider_key_id = self.service._get_provider_info(
+            "azure/gpt-4o"
+        )
         self.assertEqual(provider, "azure")
         self.assertEqual(provider_key_id, self.provider_key_azure.id)
 
-        provider, model, base_url, provider_key_id = self.service._get_provider_info("bedrock/anthropic.claude-3-5-sonnet-20240620-v1:0")
+        provider, model, base_url, provider_key_id = self.service._get_provider_info(
+            "bedrock/anthropic.claude-3-5-sonnet-20240620-v1:0"
+        )
         self.assertEqual(provider, "bedrock")
         self.assertEqual(provider_key_id, self.provider_key_bedrock.id)
+
+    async def test_get_provider_info_with_allowed_providers(self):
+        """Test getting provider info with allowed_provider_names optimization"""
+        # Test with allowed providers that should match
+        allowed_providers = {"openai", "custom"}
+        provider, model, base_url, provider_key_id = self.service._get_provider_info(
+            "custom/xxxx", allowed_provider_names=allowed_providers
+        )
+        self.assertEqual(provider, "custom")
+        self.assertEqual(model, "custom-model")  # Model mapping applied
+        self.assertEqual(provider_key_id, self.provider_key_custom.id)
+
+        # Test with allowed providers that should not match (should fall back to original logic)
+        allowed_providers = {"openai", "anthropic"}
+        provider, model, base_url, provider_key_id = self.service._get_provider_info(
+            "xxxx", allowed_provider_names=allowed_providers
+        )
+        # Should fall back to model mapping lookup
+        self.assertEqual(provider, "custom")
+        self.assertEqual(model, "custom-model")  # Model mapping applied
+        self.assertEqual(provider_key_id, self.provider_key_custom.id)
+
+        # Test case-insensitive matching
+        allowed_providers = {"OPENAI", "CUSTOM"}
+        provider, model, base_url, provider_key_id = self.service._get_provider_info(
+            "custom/xxxx", allowed_provider_names=allowed_providers
+        )
+        self.assertEqual(provider, "custom")
+        self.assertEqual(model, "custom-model")  # Model mapping applied
+
+        # Test with no allowed providers (should use original logic)
+        provider, model, base_url, provider_key_id = self.service._get_provider_info(
+            "xxxx", allowed_provider_names=None
+        )
+        self.assertEqual(provider, "custom")
+        self.assertEqual(model, "custom-model")  # Model mapping applied
+
+    async def test_merged_extract_provider_name_prefix_function(self):
+        """Test that the merged _extract_provider_name_prefix function works with both approaches"""
+        # Test with allowed_provider_names (optimized approach)
+        allowed_providers = {"openai", "custom"}
+        provider, model = self.service._extract_provider_name_prefix(
+            "custom/xxxx", allowed_provider_names=allowed_providers
+        )
+        self.assertEqual(provider, "custom")
+        self.assertEqual(model, "xxxx")
+
+        # Test without allowed_provider_names (comprehensive approach)
+        provider, model = self.service._extract_provider_name_prefix("custom/xxxx")
+        self.assertEqual(provider, "custom")
+        self.assertEqual(model, "xxxx")
+
+        # Test with a provider that's not in allowed_provider_names
+        provider, model = self.service._extract_provider_name_prefix(
+            "anthropic/claude", allowed_provider_names={"openai", "custom"}
+        )
+        self.assertIsNone(provider)
+        self.assertEqual(model, "anthropic/claude")
+
+        # Test that both approaches return the same result for the same input
+        provider1, model1 = self.service._extract_provider_name_prefix(
+            "openai/gpt-4", allowed_provider_names={"openai", "anthropic"}
+        )
+        provider2, model2 = self.service._extract_provider_name_prefix("openai/gpt-4")
+        self.assertEqual(provider1, provider2)
+        self.assertEqual(model1, model2)
+
+    async def test_extract_provider_name_prefix_with_custom_provider(self):
+        """Test that _extract_provider_name_prefix works with custom providers not in adapter factory"""
+        # Test with a custom provider that's in the user's provider keys but not in adapter factory
+        provider, model = self.service._extract_provider_name_prefix("custom/xxxx")
+        self.assertEqual(provider, "custom")
+        self.assertEqual(model, "xxxx")
+
+        # Test with a provider that's in both adapter factory and user keys
+        provider, model = self.service._extract_provider_name_prefix("openai/gpt-4")
+        self.assertEqual(provider, "openai")
+        self.assertEqual(model, "gpt-4")
+
+        # Test with a provider that's only in adapter factory (should still work)
+        # Note: This test assumes there are providers in adapter factory that aren't in user keys
+        # We'll test with a model that doesn't have a prefix
+        provider, model = self.service._extract_provider_name_prefix("gpt-4")
+        self.assertIsNone(provider)
+        self.assertEqual(model, "gpt-4")
 
     @patch("aiohttp.ClientSession.post")
     async def test_call_openai_api(self, mock_post):
@@ -302,7 +429,9 @@ class TestProviderService(TestCase):
     @patch("app.services.providers.adapter_factory.ProviderAdapterFactory.get_adapter")
     @patch("app.services.provider_service.decrypt_api_key")
     @patch("app.services.usage_stats_service.UsageStatsService.log_api_request")
-    async def test_process_request_routing(self, mock_log_usage, mock_decrypt, mock_get_adapter):
+    async def test_process_request_routing(
+        self, mock_log_usage, mock_decrypt, mock_get_adapter
+    ):
         """Test request routing based on model name"""
         # Create mocks for adapters
         mock_openai_adapter = MagicMock()
@@ -323,37 +452,59 @@ class TestProviderService(TestCase):
             "encrypted_fireworks_key": "decrypted_fireworks_key",
             "encrypted_openrouter_key": "decrypted_openrouter_key",
             "encrypted_together_key": "decrypted_together_key",
-            "encrypted_azure_key": json.dumps({
-                "api_key": "decrypted_azure_key",
-                "api_version": "2025-01-01-preview",
-            }),
-            "encrypted_bedrock_key": json.dumps({
-                "api_key": "decrypted_bedrock_key",
-                "region_name": "us-east-1",
-                "aws_access_key_id": "decrypted_aws_access_key_id",
-                "aws_secret_access_key": "decrypted_aws_secret_access_key",
-            }),
+            "encrypted_azure_key": json.dumps(
+                {
+                    "api_key": "decrypted_azure_key",
+                    "api_version": "2025-01-01-preview",
+                }
+            ),
+            "encrypted_bedrock_key": json.dumps(
+                {
+                    "api_key": "decrypted_bedrock_key",
+                    "region_name": "us-east-1",
+                    "aws_access_key_id": "decrypted_aws_access_key_id",
+                    "aws_secret_access_key": "decrypted_aws_secret_access_key",
+                }
+            ),
         }
         mock_decrypt.side_effect = lambda key: decrypt_key_map[key]
 
         # Now we could mock the process_completion method
-        mock_openai_adapter.process_completion = AsyncMock(return_value={"id": "openai-response"})
+        mock_openai_adapter.process_completion = AsyncMock(
+            return_value={"id": "openai-response"}
+        )
 
-        mock_anthropic_adapter.process_completion = AsyncMock(return_value={"id": "anthropic-response"})
+        mock_anthropic_adapter.process_completion = AsyncMock(
+            return_value={"id": "anthropic-response"}
+        )
 
-        mock_gemini_adapter.process_completion = AsyncMock(return_value={"id": "gemini-response"})
+        mock_gemini_adapter.process_completion = AsyncMock(
+            return_value={"id": "gemini-response"}
+        )
 
-        mock_xai_adapter.process_completion = AsyncMock(return_value={"id": "xai-response"})
+        mock_xai_adapter.process_completion = AsyncMock(
+            return_value={"id": "xai-response"}
+        )
 
-        mock_fireworks_adapter.process_completion = AsyncMock(return_value={"id": "fireworks-response"})
+        mock_fireworks_adapter.process_completion = AsyncMock(
+            return_value={"id": "fireworks-response"}
+        )
 
-        mock_openrouter_adapter.process_completion = AsyncMock(return_value={"id": "openrouter-response"})
+        mock_openrouter_adapter.process_completion = AsyncMock(
+            return_value={"id": "openrouter-response"}
+        )
 
-        mock_together_adapter.process_completion = AsyncMock(return_value={"id": "together-response"})
+        mock_together_adapter.process_completion = AsyncMock(
+            return_value={"id": "together-response"}
+        )
 
-        mock_azure_adapter.process_completion = AsyncMock(return_value={"id": "azure-response"})
+        mock_azure_adapter.process_completion = AsyncMock(
+            return_value={"id": "azure-response"}
+        )
 
-        mock_bedrock_adapter.process_completion = AsyncMock(return_value={"id": "bedrock-response"})
+        mock_bedrock_adapter.process_completion = AsyncMock(
+            return_value={"id": "bedrock-response"}
+        )
 
         # Configure get_adapter to return the appropriate mock
         provider_mapping = {
@@ -367,9 +518,9 @@ class TestProviderService(TestCase):
             "azure": mock_azure_adapter,
             "bedrock": mock_bedrock_adapter,
         }
-        mock_get_adapter.side_effect = lambda provider, base_url, config: provider_mapping[
-            provider
-        ]
+        mock_get_adapter.side_effect = (
+            lambda provider, base_url, config: provider_mapping[provider]
+        )
 
         # Test OpenAI routing
         result_openai = await self.service.process_request(
@@ -442,7 +593,8 @@ class TestProviderService(TestCase):
 
         # Test Bedrock routing
         result_bedrock = await self.service.process_request(
-            "chat/completions", {"model": "bedrock/anthropic.claude-3-5-sonnet-20240620-v1:0"}
+            "chat/completions",
+            {"model": "bedrock/anthropic.claude-3-5-sonnet-20240620-v1:0"},
         )
         self.assertEqual(result_bedrock["id"], "bedrock-response")
         mock_bedrock_adapter.process_completion.assert_called_once()
