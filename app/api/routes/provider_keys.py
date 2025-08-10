@@ -125,6 +125,9 @@ async def _process_provider_key_update_data(
 
     if "api_key" in update_data or "config" in update_data:
         api_key = update_data.pop("api_key", None) or old_api_key
+        # if api_key is masked, use the old api key
+        if "****" in api_key:
+            api_key = old_api_key
         config = update_data.pop("config", None) or old_config
         _validate_provider_cls_init(db_provider_key.provider_name, db_provider_key.base_url, config)
         serialized_api_key_config = provider_cls.serialize_api_key_config(api_key, config)
@@ -326,9 +329,6 @@ async def _batch_upsert_provider_keys_internal(
     invalidated_forge_api_keys = set()
 
     for item in items:
-        if "****" in item.api_key:
-            continue
-
         try:
             existing_provider_key: ProviderKeyModel | None = existing_keys_map.get(item.provider_name)
 
