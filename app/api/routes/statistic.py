@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, func
 from sqlalchemy.sql.functions import coalesce
+from sqlalchemy import or_
 from datetime import datetime, timedelta, UTC
 from enum import StrEnum
 
@@ -26,12 +27,20 @@ async def get_usage_realtime(
     db: AsyncSession = Depends(get_async_db),
     offset: int = Query(0, ge=0),
     limit: int = Query(10, ge=1),
+    forge_key: str = Query(None, min_length=1),
+    provider_name: str = Query(None, min_length=1),
+    model_name: str = Query(None, min_length=1),
+    started_at: datetime = Query(None),
+    ended_at: datetime = Query(None),
 ):
     """
     Get real-time usage statistics for the current user up to the last 7 days.
     """
     # Calculate the date 7 days ago
-    seven_days_ago = datetime.now(UTC) - timedelta(days=7)
+    now = datetime.now(UTC)
+    seven_days_ago = now - timedelta(days=7)
+    started_at = started_at if started_at is not None and started_at > seven_days_ago else seven_days_ago
+    ended_at = ended_at if ended_at is not None and ended_at < now else None
 
     # Build the query
     query = (
@@ -49,7 +58,14 @@ async def get_usage_realtime(
         .join(ForgeApiKey, UsageTracker.forge_key_id == ForgeApiKey.id)
         .where(
             UsageTracker.user_id == current_user.id,
-            UsageTracker.created_at >= seven_days_ago,
+            UsageTracker.created_at >= started_at,
+            ended_at is None or UsageTracker.created_at <= ended_at,
+            forge_key is None or or_(
+                ForgeApiKey.key.ilike(f"%{forge_key}%"),
+                ForgeApiKey.name.ilike(f"%{forge_key}%")
+            ),
+            provider_name is None or ProviderKey.provider_name.ilike(f"%{provider_name}%"),
+            model_name is None or UsageTracker.model.ilike(f"%{model_name}%")
         )
         .order_by(desc(UsageTracker.created_at))
         .offset(offset)
@@ -85,9 +101,13 @@ async def get_usage_realtime_clerk(
     db: AsyncSession = Depends(get_async_db),
     offset: int = Query(0, ge=0),
     limit: int = Query(10, ge=1),
+    forge_key: str = Query(None, min_length=1),
+    provider_name: str = Query(None, min_length=1),
+    model_name: str = Query(None, min_length=1),
+    started_at: datetime = Query(None),
+    ended_at: datetime = Query(None),
 ):
-    return await get_usage_realtime(current_user, db, offset, limit)
-
+    return await get_usage_realtime(current_user, db, offset, limit, forge_key, provider_name, model_name, started_at, ended_at)
 
 
 class UsageSummaryTimeSpan(StrEnum):
