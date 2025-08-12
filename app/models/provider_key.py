@@ -27,3 +27,4 @@ class ProviderKey(BaseModel):
         back_populates="allowed_provider_keys",
         lazy="selectin",
     )
+    usage_tracker = relationship("UsageTracker", back_populates="provider_key")
