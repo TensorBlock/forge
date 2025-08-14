@@ -1,6 +1,7 @@
 from pydantic import BaseModel, field_validator
 from datetime import datetime
 import re
+import decimal
 
 from app.api.schemas.forge_api_key import ForgeApiKeyMasked
 
@@ -18,6 +19,7 @@ class UsageRealtimeResponse(BaseModel):
     model_name: str
     tokens: int
     duration: float
+    cost: decimal.Decimal
     
     @field_validator('forge_key')
     @classmethod
@@ -33,6 +35,7 @@ class UsageRealtimeResponse(BaseModel):
 class UsageSummaryBreakdown(BaseModel):
     forge_key: str
     tokens: int
+    cost: decimal.Decimal
 
     @field_validator('forge_key')
     @classmethod
@@ -44,6 +47,7 @@ class UsageSummaryResponse(BaseModel):
     time_point: datetime
     breakdown: list[UsageSummaryBreakdown]
     total_tokens: int
+    total_cost: decimal.Decimal
 
     @field_validator('time_point')
     @classmethod
@@ -54,6 +58,7 @@ class UsageSummaryResponse(BaseModel):
 class ForgeKeysUsageSummaryResponse(BaseModel):
     forge_key: str
     tokens: int
+    cost: decimal.Decimal
 
     @field_validator('forge_key')
     @classmethod
