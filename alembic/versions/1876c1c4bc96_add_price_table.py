@@ -88,8 +88,8 @@ def upgrade() -> None:
                 "provider_name": row["provider_name"],
                 "model_name": row["model_name"],
                 "effective_date": effective_date,
-                "input_token_price": (decimal.Decimal(str(row["input_token_price"])) * 1000).normalize(),
-                "output_token_price": (decimal.Decimal(str(row["output_token_price"])) * 1000).normalize(),    
+                "input_token_price": decimal.Decimal(str(row["input_token_price"])).normalize(),
+                "output_token_price": decimal.Decimal(str(row["output_token_price"])).normalize(),    
                 "price_source": "manual"
             })
     if rows_to_insert:
