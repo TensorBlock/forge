@@ -9,6 +9,8 @@ from app.core.logger import get_logger
 from app.core.async_cache import async_provider_service_cache
 from app.models.pricing import ModelPricing, FallbackPricing
 
+from app.utils.model_name_matcher import ModelNameMatcher, ModelMatch
+
 logger = get_logger(name="pricing_service")
 
 class PricingService:
@@ -88,7 +90,7 @@ class PricingService:
         Fetch pricing with smart caching at multiple levels
         """
         
-        # Level 1: Try exact model cache (hot cache)
+        # Level 1: Try exact model cache 
         exact_cache_key = f"pricing:exact:{provider_name}:{model_name}"
         exact_pricing = await async_provider_service_cache.get(exact_cache_key)
         
@@ -96,7 +98,15 @@ class PricingService:
             logger.debug(f"Exact match cache hit for {provider_name}/{model_name}")
             return {**exact_pricing, 'source': 'exact_match'}
         
-        # Level 2: Try provider fallback cache (warm cache)
+        # Level 2: Try model fallback cache
+        model_cache_key = f"pricing:model_fallback:{provider_name}:{model_name}"
+        model_fallback = await async_provider_service_cache.get(model_cache_key)
+        
+        if model_fallback and PricingService._is_pricing_valid_for_date(model_fallback, calculation_date):
+            logger.debug(f"Model fallback cache hit for {provider_name}/{model_name}")
+            return {**model_fallback, 'source': 'fallback_model'}
+        
+        # Level 3: Try provider fallback cache 
         provider_cache_key = f"pricing:provider_fallback:{provider_name}:{model_name}"
         provider_fallback = await async_provider_service_cache.get(provider_cache_key)
         
@@ -104,7 +114,7 @@ class PricingService:
             logger.debug(f"Provider fallback cache hit for {provider_name}")
             return {**provider_fallback, 'source': 'fallback_provider'}
         
-        # Level 3: Try global fallback cache (warm cache)
+        # Level 4: Try global fallback cache 
         global_cache_key = f"pricing:global_fallback:{provider_name}:{model_name}"
         global_fallback = await async_provider_service_cache.get(global_cache_key)
         
@@ -141,6 +151,20 @@ class PricingService:
                 cache_key, exact_pricing, ttl=PricingService.EXACT_CACHE_TTL
             )
             return {**exact_pricing, 'source': 'exact_match'}
+        
+        # Try model fallback
+        model_fallback = await PricingService._get_model_fallback_pricing_db(
+            db, model_name, calculation_date
+        )
+        
+        if model_fallback:
+            # Cache model fallback (warm cache)
+            cache_key = f"pricing:model_fallback:{provider_name}:{model_name}"
+            await async_provider_service_cache.set(
+                cache_key, model_fallback, ttl=PricingService.FALLBACK_CACHE_TTL
+            )
+            logger.warning(f"Using model fallback pricing for {provider_name}/{model_name}")
+            return {**model_fallback, 'source': 'fallback_model'}
         
         # Try provider fallback
         provider_fallback = await PricingService._get_provider_fallback_pricing_db(
@@ -368,6 +392,7 @@ class PricingService:
         """Get appropriate TTL based on pricing data source"""
         ttl_map = {
             'exact_match': PricingService.EXACT_CACHE_TTL,
+            'fallback_model': PricingService.FALLBACK_CACHE_TTL,
             'fallback_provider': PricingService.FALLBACK_CACHE_TTL,
             'fallback_global': PricingService.FALLBACK_CACHE_TTL,
             'emergency_fallback': PricingService.EMERGENCY_CACHE_TTL,
@@ -416,27 +441,48 @@ class PricingService:
     # Database query methods (only called on cache misses)
     @staticmethod
     async def _get_exact_model_pricing_db(db: AsyncSession, provider_name: str, model_name: str, calculation_date: datetime) -> Optional[Dict[str, Any]]:
-        """Get model pricing from database using longest prefix matching with pure SQL"""
-        
-        query = select(ModelPricing).where(
+        """Get model pricing from database"""
+        # First, get available models for this provider, sorted by effective_date DESC
+        # This ensures we prioritize the most recent models
+        query = select(ModelPricing.model_name, func.max(ModelPricing.effective_date).label('latest_date')).where(
             ModelPricing.provider_name == provider_name,
             ModelPricing.effective_date <= calculation_date,
-            or_(ModelPricing.end_date.is_(None), ModelPricing.end_date > calculation_date),
-            # The input model starts with the stored model name (prefix match)
-            text(f"'{model_name}' ilike concat(model_name, '%%')")
-        ).order_by(
-            # Longest prefix first
-            func.length(ModelPricing.model_name).desc(),
-            ModelPricing.effective_date.desc()
-        ).limit(1)
+            or_(ModelPricing.end_date.is_(None), ModelPricing.end_date > calculation_date)
+        ).group_by(ModelPricing.model_name).order_by(
+            func.max(ModelPricing.effective_date).desc()  # Most recent models first
+        )
         
         result = await db.execute(query)
+        model_rows = result.fetchall()
+
+        if not model_rows:
+            return None
+        
+        # Now, find the best match for the input model name
+        available_models = [row[0] for row in model_rows]
+        matcher = ModelNameMatcher(available_models)
+        best_match = matcher.find_best_match(model_name)
+
+        if not best_match:
+            return None
+        
+        if best_match.match_type != 'exact':
+            logger.info(f"Provider {provider_name} model match: '{model_name}' -> '{best_match.matched_model}'(type: {best_match.match_type}, confidence: {best_match.confidence:.2f})")
+
+        
+        pricing_query = select(ModelPricing).where(
+            ModelPricing.provider_name == provider_name,
+            ModelPricing.model_name == best_match.matched_model,
+            ModelPricing.effective_date <= calculation_date,
+            or_(ModelPricing.end_date.is_(None), ModelPricing.end_date > calculation_date)
+        ).order_by(
+            ModelPricing.effective_date.desc()
+        ).limit(1)
+
+        result = await db.execute(pricing_query)
         pricing = result.scalar_one_or_none()
         
         if pricing:
-            if pricing.model_name != model_name:
-                logger.debug(f"Prefix match: '{model_name}' matched with '{pricing.model_name}'")
-            
             return {
                 'input_price': pricing.input_token_price,
                 'output_price': pricing.output_token_price,
@@ -446,6 +492,57 @@ class PricingService:
                 'end_date': pricing.end_date.isoformat() if pricing.end_date else None,
             }
         
+        return None
+    
+    @staticmethod
+    async def _get_model_fallback_pricing_db(db: AsyncSession, model_name: str, calculation_date: datetime) -> Optional[Dict[str, Any]]:
+        """Get model fallback pricing from database"""
+        query = select(FallbackPricing.model_name, func.max(FallbackPricing.effective_date).label('latest_date')).where(
+            FallbackPricing.effective_date <= calculation_date,
+            FallbackPricing.fallback_type == 'model_default',
+            or_(FallbackPricing.end_date.is_(None), FallbackPricing.end_date > calculation_date)
+        ).group_by(FallbackPricing.model_name).order_by(
+            func.max(FallbackPricing.effective_date).desc()  # Most recent models first
+        )
+
+        result = await db.execute(query)
+        model_rows = result.fetchall()
+
+        if not model_rows:
+            return None
+        
+        # Now, find the best match for the input model name
+        available_models = [row[0] for row in model_rows]
+        matcher = ModelNameMatcher(available_models)
+        best_match = matcher.find_best_match(model_name)
+
+        if not best_match:
+            return None
+        
+        if best_match.match_type != 'exact':
+            logger.info(f"Fallback model match: '{model_name}' -> '{best_match.matched_model}'(type: {best_match.match_type}, confidence: {best_match.confidence:.2f})")
+        
+        pricing_query = select(FallbackPricing).where(
+            FallbackPricing.model_name == best_match.matched_model,
+            FallbackPricing.effective_date <= calculation_date,
+            or_(FallbackPricing.end_date.is_(None), FallbackPricing.end_date > calculation_date)
+        ).order_by(
+            FallbackPricing.effective_date.desc()
+        ).limit(1)
+
+        result = await db.execute(pricing_query)
+        fallback = result.scalar_one_or_none()
+        
+        if fallback:
+            return {
+                'input_price': fallback.input_token_price,
+                'output_price': fallback.output_token_price,
+                'cached_price': fallback.cached_token_price,
+                'currency': fallback.currency,
+                'effective_date': fallback.effective_date.isoformat(),
+                'end_date': fallback.end_date.isoformat() if fallback.end_date else None,
+            }
+
         return None
     
     @staticmethod
@@ -466,7 +563,7 @@ class PricingService:
                 'input_price': fallback.input_token_price,
                 'output_price': fallback.output_token_price,
                 'cached_price': fallback.cached_token_price,
-                'currency': 'USD',
+                'currency': fallback.currency,
                 'effective_date': fallback.effective_date.isoformat(),
                 'end_date': fallback.end_date.isoformat() if fallback.end_date else None,
             }
@@ -489,7 +586,7 @@ class PricingService:
                 'input_price': fallback.input_token_price,
                 'output_price': fallback.output_token_price,
                 'cached_price': fallback.cached_token_price,
-                'currency': 'USD',
+                'currency': fallback.currency,
                 'effective_date': fallback.effective_date.isoformat(),
                 'end_date': fallback.end_date.isoformat() if fallback.end_date else None,
             }

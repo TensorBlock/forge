@@ -45,7 +45,8 @@ class FallbackPricing(BaseModel):
     __tablename__ = "fallback_pricing"
 
     provider_name = Column(String, nullable=True, index=True)  # NULL for global fallback
-    fallback_type = Column(String(20), nullable=False, index=True)  # 'provider_default', 'global_default'
+    model_name = Column(String, nullable=True, index=True)  # NULL for global fallback
+    fallback_type = Column(String(20), nullable=False, index=True)  # 'model_default', 'provider_default', 'global_default'
     
     # Temporal fields
     effective_date = Column(DateTime(timezone=True), nullable=False, default=datetime.datetime.now(UTC))
