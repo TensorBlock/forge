@@ -17,6 +17,15 @@ class ProviderKeyBase(BaseModel):
     model_mapping: dict[str, str] | None = None
     config: dict[str, str] | None = None
 
+    @field_validator("provider_name")
+    @classmethod
+    def strip_provider_name(cls, v):
+        """Strip whitespace from provider_name."""
+        stripped = v.strip()
+        if len(stripped) < 1:
+            raise ValueError("provider_name must have at least 1 character after stripping whitespace")
+        return stripped
+
 
 class ProviderKeyCreate(ProviderKeyBase):
     pass
@@ -100,8 +109,18 @@ class ProviderKey(ProviderKeyInDBBase):
 
 
 class ProviderKeyUpsertItem(BaseModel):
+    id: int | None = None
     provider_name: str = Field(..., min_length=1)
     api_key: str | None = None
     base_url: str | None = None
     model_mapping: dict[str, str] | None = None
     config: dict[str, str] | None = None
+
+    @field_validator("provider_name")
+    @classmethod
+    def strip_provider_name(cls, v):
+        """Strip whitespace from provider_name."""
+        stripped = v.strip()
+        if len(stripped) < 1:
+            raise ValueError("provider_name must have at least 1 character after stripping whitespace")
+        return stripped
