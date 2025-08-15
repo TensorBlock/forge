@@ -13,11 +13,14 @@ def mask_forge_name_or_key(v: str) -> str:
     return v
 
 class UsageRealtimeResponse(BaseModel):
-    timestamp: datetime
+    timestamp: datetime | str
     forge_key: str
     provider_name: str
     model_name: str
     tokens: int
+    input_tokens: int
+    output_tokens: int
+    cached_tokens: int
     duration: float
     cost: decimal.Decimal
     
@@ -28,7 +31,9 @@ class UsageRealtimeResponse(BaseModel):
 
     @field_validator('timestamp')
     @classmethod
-    def convert_timestamp_to_iso(cls, v: datetime) -> str:
+    def convert_timestamp_to_iso(cls, v: datetime | str) -> str:
+        if isinstance(v, str):
+            return v
         return v.isoformat()
 
 
@@ -36,6 +41,9 @@ class UsageSummaryBreakdown(BaseModel):
     forge_key: str
     tokens: int
     cost: decimal.Decimal
+    input_tokens: int
+    output_tokens: int
+    cached_tokens: int
 
     @field_validator('forge_key')
     @classmethod
@@ -44,14 +52,19 @@ class UsageSummaryBreakdown(BaseModel):
 
 
 class UsageSummaryResponse(BaseModel):
-    time_point: datetime
+    time_point: datetime | str
     breakdown: list[UsageSummaryBreakdown]
     total_tokens: int
     total_cost: decimal.Decimal
+    total_input_tokens: int
+    total_output_tokens: int
+    total_cached_tokens: int
 
     @field_validator('time_point')
     @classmethod
-    def convert_timestamp_to_iso(cls, v: datetime) -> str:
+    def convert_timestamp_to_iso(cls, v: datetime | str) -> str:
+        if isinstance(v, str):
+            return v
         return v.isoformat()
 
 
@@ -59,6 +72,9 @@ class ForgeKeysUsageSummaryResponse(BaseModel):
     forge_key: str
     tokens: int
     cost: decimal.Decimal
+    input_tokens: int
+    output_tokens: int
+    cached_tokens: int
 
     @field_validator('forge_key')
     @classmethod
