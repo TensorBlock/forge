@@ -93,23 +93,23 @@ class PricingService:
         exact_pricing = await async_provider_service_cache.get(exact_cache_key)
         
         if exact_pricing and PricingService._is_pricing_valid_for_date(exact_pricing, calculation_date):
-            logger.debug(f"Hot cache hit for {provider_name}/{model_name}")
+            logger.debug(f"Exact match cache hit for {provider_name}/{model_name}")
             return {**exact_pricing, 'source': 'exact_match'}
         
         # Level 2: Try provider fallback cache (warm cache)
-        provider_cache_key = f"pricing:provider_fallback:{provider_name}"
+        provider_cache_key = f"pricing:provider_fallback:{provider_name}:{model_name}"
         provider_fallback = await async_provider_service_cache.get(provider_cache_key)
         
         if provider_fallback and PricingService._is_pricing_valid_for_date(provider_fallback, calculation_date):
-            logger.debug(f"Warm cache hit for provider {provider_name}")
+            logger.debug(f"Provider fallback cache hit for {provider_name}")
             return {**provider_fallback, 'source': 'fallback_provider'}
         
         # Level 3: Try global fallback cache (warm cache)
-        global_cache_key = f"pricing:global_fallback"
+        global_cache_key = f"pricing:global_fallback:{provider_name}:{model_name}"
         global_fallback = await async_provider_service_cache.get(global_cache_key)
         
         if global_fallback and PricingService._is_pricing_valid_for_date(global_fallback, calculation_date):
-            logger.debug("Warm cache hit for global fallback")
+            logger.debug("Global fallback cache hit")
             return {**global_fallback, 'source': 'fallback_global'}
         
         # Cache miss - hit database (this should be rare)
@@ -149,7 +149,7 @@ class PricingService:
         
         if provider_fallback:
             # Cache provider fallback (warm cache)
-            cache_key = f"pricing:provider_fallback:{provider_name}"
+            cache_key = f"pricing:provider_fallback:{provider_name}:{model_name}"
             await async_provider_service_cache.set(
                 cache_key, provider_fallback, ttl=PricingService.FALLBACK_CACHE_TTL
             )
@@ -163,7 +163,7 @@ class PricingService:
         
         if global_fallback:
             # Cache global fallback (warm cache)
-            cache_key = f"pricing:global_fallback"
+            cache_key = f"pricing:global_fallback:{provider_name}:{model_name}"
             await async_provider_service_cache.set(
                 cache_key, global_fallback, ttl=PricingService.FALLBACK_CACHE_TTL
             )

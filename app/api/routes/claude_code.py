@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import get_user_by_api_key
+from app.api.dependencies import get_user_by_api_key, get_user_details_by_api_key
 from app.api.routes.proxy import _get_allowed_provider_names
 from app.api.schemas.anthropic import (
     AnthropicErrorResponse,
@@ -98,13 +98,16 @@ async def _log_and_return_error_response(
 @router.post("/messages", response_model=None, tags=["Claude Code"], status_code=200)
 async def create_message_proxy(
     request: Request,
-    user: User = Depends(get_user_by_api_key),
+    user_details: dict[str, Any] = Depends(get_user_details_by_api_key),
     db: AsyncSession = Depends(get_async_db),
 ) -> Union[JSONResponse, StreamingResponse]:
     """
     Main endpoint for Claude Code message completions, proxied through Forge to providers.
     Handles request/response conversions, streaming, and dynamic model selection.
     """
+    user = user_details["user"]
+    api_key_id = user_details["api_key_id"]
+
     request_id = str(uuid.uuid4())
     request.state.request_id = request_id
     request.state.start_time_monotonic = time.monotonic()
@@ -224,7 +227,7 @@ async def create_message_proxy(
 
     try:
         # Use Forge's provider service to process the request
-        provider_service = await ProviderService.async_get_instance(user, db)
+        provider_service = await ProviderService.async_get_instance(user, db, api_key_id)
         allowed_provider_names = await _get_allowed_provider_names(request, db)
 
         # Process request through Forge

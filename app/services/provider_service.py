@@ -598,8 +598,7 @@ class ProviderService:
                 endpoint=endpoint,
             )
         else:
-            # TODO: this shouldn't happen, but we handle it gracefully as we don't want to break the flow
-            # Dive deeper into this if it ever happens
+            # For api like list models, we don't have usage tracking
             logger.info(
                 f"api_key_id: {self.api_key_id}, provider_key_id: {provider_key_id}"
             )
