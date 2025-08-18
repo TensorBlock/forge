@@ -207,7 +207,10 @@ class ProviderService:
         for provider_key in provider_key_records:
             model_mapping = provider_key.model_mapping or {}
 
-            keys[provider_key.provider_name] = {
+            # Normalize provider name to lowercase for consistent lookup
+            normalized_provider_name = provider_key.provider_name.lower()
+
+            keys[normalized_provider_name] = {
                 "id": provider_key.id,
                 "api_key": decrypt_api_key(provider_key.encrypted_api_key),
                 "base_url": provider_key.base_url,
@@ -264,7 +267,10 @@ class ProviderService:
         for provider_key in provider_key_records:
             model_mapping = provider_key.model_mapping or {}
 
-            keys[provider_key.provider_name] = {
+            # Normalize provider name to lowercase for consistent lookup
+            normalized_provider_name = provider_key.provider_name.lower()
+
+            keys[normalized_provider_name] = {
                 "id": provider_key.id,
                 "api_key": decrypt_api_key(provider_key.encrypted_api_key),
                 "base_url": provider_key.base_url,
@@ -303,8 +309,8 @@ class ProviderService:
         if not self._keys_loaded:
             return None, model
 
-        # Get user's available provider names
-        user_provider_names = {p.lower() for p in self.provider_keys.keys()}
+        # Get user's available provider names (already normalized to lowercase)
+        user_provider_names = set(self.provider_keys.keys())
 
         if allowed_provider_names:
             # allowed_provider_names is already the intersection of user's provider keys and API key scope
@@ -359,8 +365,10 @@ class ProviderService:
         self, provider_name: str, model_name: str, original_model: str
     ) -> tuple[str, str, str | None, int | None]:
         """Handles provider lookup when a prefix is found in the model name."""
+        # Provider keys are now normalized to lowercase, so we can do direct lookup
+        provider_name_lower = provider_name.lower()
         matching_provider = next(
-            (key for key in self.provider_keys.keys() if key.lower() == provider_name),
+            (key for key in self.provider_keys.keys() if key == provider_name_lower),
             None,
         )
 
