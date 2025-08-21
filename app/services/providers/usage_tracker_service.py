@@ -10,6 +10,7 @@ import uuid
 from app.core.logger import get_logger
 from app.models.usage_tracker import UsageTracker
 from app.services.pricing_service import PricingService
+from app.services.wallet_service import WalletService
 
 logger = get_logger(name="usage_tracker")
 
@@ -80,6 +81,22 @@ class UsageTrackerService:
             usage_tracker.cost = price_info['total_cost']
             usage_tracker.currency = price_info['currency']
             usage_tracker.pricing_source = price_info['pricing_source']
+            
+            # Deduct from wallet balance if the provider is not free
+            if price_info['total_cost'] and price_info['total_cost'] > 0 and usage_tracker.provider_key.billable:
+                try:
+                    result = await WalletService.adjust(
+                        db, 
+                        usage_tracker.user_id, 
+                        -price_info['total_cost'], 
+                        f"usage:{usage_tracker.endpoint}",
+                        price_info['currency']
+                    )
+                    if not result.get("success"):
+                        logger.warning(f"Failed to deduct from wallet for user {usage_tracker.user_id}: {result.get('reason')}")
+                except Exception as wallet_err:
+                    logger.exception(f"Wallet deduction failed for user {usage_tracker.user_id}: {wallet_err}")
+            
             await db.commit()
             logger.debug(f"Updated usage tracker {usage_tracker_id} with input_tokens {input_tokens}, output_tokens {output_tokens}, cached_tokens {cached_tokens}, reasoning_tokens {reasoning_tokens}")
         except NoResultFound:
