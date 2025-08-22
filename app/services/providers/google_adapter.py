@@ -301,6 +301,7 @@ class GoogleAdapter(ProviderAdapter):
     async def _stream_google_response(
         self, api_key: str, model: str, google_payload: dict[str, Any]
     ) -> AsyncGenerator[bytes, None]:
+        # https://ai.google.dev/api/generate-content#method:-models.streamgeneratecontent
         model_path = model if model.startswith("models/") else f"models/{model}"
         url = f"{self._base_url}/{model_path}:streamGenerateContent"
 
@@ -345,8 +346,10 @@ class GoogleAdapter(ProviderAdapter):
                     )
 
                 # Process response in chunks
-                # https://ai.google.dev/api/generate-content#v1beta.GenerateContentResponse
                 buffer = ""
+                # According to https://ai.google.dev/api/generate-content#UsageMetadata
+                # thoughtsTokenCount is output only. We should only record it once
+                logged_thoughts_tokens = False
                 async for chunk in response.content.iter_chunks():
                     if not chunk[0]:  # Empty chunk
                         continue
@@ -379,6 +382,11 @@ class GoogleAdapter(ProviderAdapter):
                                 usage_data = self.format_google_usage(
                                     json_obj["usageMetadata"]
                                 )
+                                if logged_thoughts_tokens:
+                                    del usage_data['completion_tokens_details']
+                                elif usage_data.get('completion_tokens_details', {}).get('reasoning_tokens'):
+                                    logged_thoughts_tokens = True
+
 
                             if "candidates" in json_obj:
                                 choices = []
@@ -431,6 +439,7 @@ class GoogleAdapter(ProviderAdapter):
 
     @staticmethod
     def format_google_usage(metadata: dict) -> dict:
+        # https://ai.google.dev/api/generate-content#UsageMetadata
         """Format Google usage metadata to OpenAI format"""
         if not metadata:
             return None
@@ -457,7 +466,7 @@ class GoogleAdapter(ProviderAdapter):
                 "stopSequences": payload.get("stop", []),
                 "temperature": payload.get("temperature", 0.7),
                 "topP": payload.get("top_p", 0.95),
-                "maxOutputTokens": payload.get("max_completion_tokens", payload.get("max_tokens", 2048)),
+                "maxOutputTokens": payload.get("max_completion_tokens", payload.get("max_tokens")),
             },
         }
 
