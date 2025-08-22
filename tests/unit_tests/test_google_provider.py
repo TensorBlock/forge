@@ -87,7 +87,7 @@ class TestGoogleProvider(TestCase):
                 "generationConfig": {
                     "temperature": 0.7,
                     "topP": 0.95,
-                    "maxOutputTokens": 2048,
+                    "maxOutputTokens": None,
                     "stopSequences": [],
                 },
                 "contents": [
@@ -127,7 +127,7 @@ class TestGoogleProvider(TestCase):
                 "generationConfig": {
                     "temperature": 0.7,
                     "topP": 0.95,
-                    "maxOutputTokens": 2048,
+                    "maxOutputTokens": None,
                     "stopSequences": [],
                 },
                 "contents": [
