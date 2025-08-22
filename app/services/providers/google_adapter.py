@@ -326,9 +326,6 @@ class GoogleAdapter(ProviderAdapter):
                     error=ValueError(error_text)
                 )
             headers = {"Content-Type": "application/json", "Accept": "application/json"}
-            logger.debug(
-                f"Google API request - URL: {url}, Payload sample: {str(google_payload)[:200]}..."
-            )
 
             async with (
                 aiohttp.ClientSession() as session,
