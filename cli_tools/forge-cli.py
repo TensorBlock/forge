@@ -178,7 +178,8 @@ class ForgeManager:
             response = requests.post(url, headers=headers, json=data)
 
             if response.status_code == HTTPStatus.OK:
-                print(f"✅ Successfully added {provider_name} API key!")
+                resp_json = response.json()
+                print(f"✅ Successfully added {resp_json['provider_name']} API key!")
                 return True
             else:
                 print(f"❌ Error adding provider key: {response.status_code}")
@@ -220,13 +221,13 @@ class ForgeManager:
             print(f"❌ Error listing provider keys: {str(e)}")
             return []
     
-    def update_provider_key(self, provider_name: str, api_key: str | None = None, base_url: str | None = None, model_mapping: str | None = None, config: str | None = None) -> bool:
+    def update_provider_key(self, provider_key_id: int, api_key: str | None = None, base_url: str | None = None, model_mapping: str | None = None, config: str | None = None) -> bool:
         """Update a provider key"""
         if not self.token:
             print("❌ Not authenticated. Please login first.")
             return False
         
-        url = f"{self.api_url}/provider-keys/{provider_name}"
+        url = f"{self.api_url}/provider-keys/{provider_key_id}"
         headers = {
             "Authorization": f"Bearer {self.token}",
             "Content-Type": "application/json",
@@ -241,7 +242,8 @@ class ForgeManager:
             response = requests.put(url, headers=headers, json=data)
 
             if response.status_code == HTTPStatus.OK:
-                print(f"✅ Successfully updated {provider_name} API key!")
+                resp_json = response.json()
+                print(f"✅ Successfully updated {provider_key_id}:{resp_json['provider_name']} API key!")
                 return True
             else:
                 print(f"❌ Error updated provider key: {response.status_code}")
@@ -252,20 +254,21 @@ class ForgeManager:
             return False
         
 
-    def delete_provider_key(self, provider_name: str) -> bool:
+    def delete_provider_key(self, provider_key_id: int) -> bool:
         """Delete a provider key"""
         if not self.token:
             print("❌ Not authenticated. Please login first.")
             return False
 
-        url = f"{self.api_url}/provider-keys/{provider_name}"
+        url = f"{self.api_url}/provider-keys/{provider_key_id}"
         headers = {"Authorization": f"Bearer {self.token}"}
 
         try:
             response = requests.delete(url, headers=headers)
 
             if response.status_code == HTTPStatus.OK:
-                print(f"✅ Successfully deleted provider key {provider_name}!")
+                resp_json = response.json()
+                print(f"✅ Successfully deleted provider key {provider_key_id}:{resp_json['provider_name']}!")
                 return True
             else:
                 print(f"❌ Error deleting provider key: {response.status_code}")
@@ -660,19 +663,19 @@ def main():
             if not forge.token:
                 token = input("Enter JWT token: ")
                 forge.token = token
-            provider_name = input("Enter provider name to delete: ")
-            forge.delete_provider_key(provider_name)
+            provider_key_id = int(input("Enter provider key id to delete: "))
+            forge.delete_provider_key(provider_key_id)
 
         elif choice == "11":
             if not forge.token:
                 token = input("Enter JWT token: ")
                 forge.token = token
-            provider_name = input("Enter provider name to update: ")
+            provider_key_id = int(input("Enter provider key id to update: "))
             api_key = getpass("Enter provider API key: ")
             base_url = input("Enter provider base URL (optional, press Enter to skip): ")
             config = input("Enter provider config in json string format (optional, press Enter to skip): ")
             model_mapping = input("Enter model mapping config in json string format (optional, press Enter to skip): ")
-            forge.update_provider_key(provider_name, api_key, base_url=base_url, config=config, model_mapping=model_mapping)
+            forge.update_provider_key(provider_key_id, api_key, base_url=base_url, config=config, model_mapping=model_mapping)
 
         elif choice == "12":
             model = input("Enter model ID: ")
