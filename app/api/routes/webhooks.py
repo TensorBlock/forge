@@ -13,13 +13,15 @@ from app.core.logger import get_logger
 from app.core.security import generate_forge_api_key
 from app.models.user import User
 from app.services.provider_service import create_default_tensorblock_provider_for_user
+from app.services.wallet_service import WalletService
 
 logger = get_logger(name="webhooks")
 
 router = APIRouter()
 
-# Clerk webhook signing secret for verifying webhook authenticity
+# Webhook signing secrets for verifying webhook authenticity
 CLERK_WEBHOOK_SECRET = os.getenv("CLERK_WEBHOOK_SECRET", "")
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 
 
 @router.post("/clerk")
@@ -237,4 +239,138 @@ async def handle_user_deleted(event_data: dict, db: AsyncSession):
     except Exception as e:
         await db.rollback()
         logger.error(f"Failed to delete user from webhook: {e}", exc_info=True)
+        raise
+
+
+@router.post("/stripe")
+async def stripe_webhook_handler(request: Request, db: AsyncSession = Depends(get_async_db)):
+    """
+    Handle Stripe webhooks for payment events.
+    
+    Key events to handle:
+    - payment_intent.succeeded: Credit wallet balance
+    - payment_intent.payment_failed: Log failed payment
+    - invoice.payment_failed: Handle subscription payment failure
+    """
+    # Get the request body and signature
+    payload = await request.body()
+    sig_header = request.headers.get("stripe-signature")
+
+    if not sig_header:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, 
+            detail="Missing Stripe signature header"
+        )
+
+    # NOTE: For production, you would verify the webhook signature here
+    # This is a placeholder for the Stripe webhook verification
+    # Example:
+    # import stripe
+    # try:
+    #     event = stripe.Webhook.construct_event(
+    #         payload, sig_header, STRIPE_WEBHOOK_SECRET
+    #     )
+    # except ValueError:
+    #     raise HTTPException(status_code=400, detail="Invalid payload")
+    # except stripe.error.SignatureVerificationError:
+    #     raise HTTPException(status_code=400, detail="Invalid signature")
+
+    try:
+        # For now, parse as JSON (would use verified event in production)
+        event_data = json.loads(payload)
+        event_type = event_data.get("type")
+        
+        logger.info(f"Received Stripe webhook: {event_type}")
+
+        # Handle different event types
+        if event_type == "payment_intent.succeeded":
+            await handle_payment_succeeded(event_data, db)
+        elif event_type == "payment_intent.payment_failed":
+            await handle_payment_failed(event_data, db)
+        elif event_type == "invoice.payment_failed":
+            await handle_invoice_payment_failed(event_data, db)
+        else:
+            logger.info(f"Unhandled Stripe event type: {event_type}")
+
+        return {"status": "success", "message": f"Event {event_type} processed"}
+
+    except json.JSONDecodeError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, 
+            detail="Invalid JSON payload"
+        )
+    except Exception as e:
+        logger.error(f"Error processing Stripe webhook: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error processing webhook: {str(e)}",
+        )
+
+
+async def handle_payment_succeeded(event_data: dict, db: AsyncSession):
+    """Handle successful payment - credit wallet balance"""
+    try:
+        payment_intent = event_data.get("data", {}).get("object", {})
+        amount = payment_intent.get("amount", 0)  # Amount in cents
+        currency = payment_intent.get("currency", "usd").upper()
+        customer_id = payment_intent.get("customer")
+        
+        # Convert cents to dollars for USD
+        if currency == "USD":
+            amount_decimal = amount / 100.0
+        else:
+            amount_decimal = amount  # Handle other currencies as needed
+        
+        # TODO: Map customer_id to user_id
+        # For now, this is a placeholder - you'd need to implement customer mapping
+        # user_id = get_user_id_from_stripe_customer(customer_id)
+        
+        logger.info(f"Payment succeeded: {amount_decimal} {currency} for customer {customer_id}")
+        
+        # Uncomment when customer mapping is implemented:
+        # await WalletService.adjust(
+        #     db, 
+        #     user_id, 
+        #     amount_decimal, 
+        #     f"deposit:stripe:{payment_intent.get('id')}", 
+        #     currency
+        # )
+        
+    except Exception as e:
+        logger.error(f"Failed to process payment success: {e}", exc_info=True)
+        raise
+
+
+async def handle_payment_failed(event_data: dict, db: AsyncSession):
+    """Handle failed payment"""
+    try:
+        payment_intent = event_data.get("data", {}).get("object", {})
+        customer_id = payment_intent.get("customer")
+        
+        logger.warning(f"Payment failed for customer {customer_id}")
+        
+        # TODO: Implement failure handling logic
+        # - Notify user
+        # - Update payment status
+        # - Handle retry logic
+        
+    except Exception as e:
+        logger.error(f"Failed to process payment failure: {e}", exc_info=True)
+        raise
+
+
+async def handle_invoice_payment_failed(event_data: dict, db: AsyncSession):
+    """Handle failed invoice payment - may need to block account"""
+    try:
+        invoice = event_data.get("data", {}).get("object", {})
+        customer_id = invoice.get("customer")
+        
+        logger.warning(f"Invoice payment failed for customer {customer_id}")
+        
+        # TODO: Map customer_id to user_id and potentially block account
+        # user_id = get_user_id_from_stripe_customer(customer_id)
+        # await WalletService.set_blocked(db, user_id, True)
+        
+    except Exception as e:
+        logger.error(f"Failed to process invoice payment failure: {e}", exc_info=True)
         raise

@@ -6,7 +6,6 @@ import os
 import time
 from collections.abc import AsyncGenerator
 from typing import Any, ClassVar
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +19,7 @@ from app.exceptions.exceptions import (
 )
 from app.models.user import User
 from app.core.database import get_db_session
+from app.services.wallet_service import WalletService
 
 from .providers.adapter_factory import ProviderAdapterFactory
 from .providers.base import ProviderAdapter
@@ -597,6 +597,7 @@ class ProviderService:
         # Process the request through the adapter
         usage_tracker_id = None
         if self.api_key_id is not None and provider_key_id is not None:
+            await WalletService.wallet_precheck(self.user_id, self.db, provider_key_id)
             usage_tracker_id = await UsageTrackerService.start_tracking_usage(
                 db=self.db,
                 user_id=self.user_id,

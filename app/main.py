@@ -18,6 +18,7 @@ from app.api.routes import (
     statistic,
     stats,
     users,
+    wallet,
     webhooks,
 )
 from app.core.database import engine
@@ -167,6 +168,7 @@ def create_app() -> FastAPI:
     v1_router.include_router(api_keys.router, prefix="/api-keys", tags=["api-keys"])
     v1_router.include_router(proxy.router, tags=["proxy"])
     v1_router.include_router(stats.router, prefix="/stats", tags=["stats"])
+    v1_router.include_router(wallet.router, prefix="/wallet", tags=["wallet"])
     v1_router.include_router(webhooks.router, prefix="/webhooks", tags=["webhooks"])
     v1_router.include_router(statistic.router, prefix='/statistic', tags=["statistic"])
     # Claude Code compatible API endpoints
