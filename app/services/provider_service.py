@@ -675,12 +675,10 @@ class ProviderService:
                 usage = result.get("usage", {})
                 input_tokens = usage.get("prompt_tokens", 0)
                 output_tokens = usage.get("completion_tokens", 0)
-                cached_tokens = usage.get("prompt_tokens_details", {}).get(
-                    "cached_tokens", 0
-                )
-                reasoning_tokens = usage.get("completion_tokens_details", {}).get(
-                    "reasoning_tokens", 0
-                )
+                prompt_tokens_details = usage.get("prompt_tokens_details", {}) or {}
+                completion_tokens_details = usage.get("completion_tokens_details", {}) or {}
+                cached_tokens = prompt_tokens_details.get("cached_tokens", 0)
+                reasoning_tokens = completion_tokens_details.get("reasoning_tokens", 0)
 
             asyncio.create_task(
                 update_usage_in_background(
@@ -750,18 +748,10 @@ class ProviderService:
                                         output_tokens += (
                                             usage.get("completion_tokens", 0) or 0
                                         )
-                                        cached_tokens += (
-                                            usage.get("prompt_tokens_details", {}).get(
-                                                "cached_tokens", 0
-                                            )
-                                            or 0
-                                        )
-                                        reasoning_tokens += (
-                                            usage.get(
-                                                "completion_tokens_details", {}
-                                            ).get("reasoning_tokens", 0)
-                                            or 0
-                                        )
+                                        prompt_tokens_details = usage.get("prompt_tokens_details", {}) or {}
+                                        completion_tokens_details = usage.get("completion_tokens_details", {}) or {}
+                                        cached_tokens += prompt_tokens_details.get("cached_tokens", 0)
+                                        reasoning_tokens += completion_tokens_details.get("reasoning_tokens", 0)
 
                                     # Extract content from the chunk based on OpenAI format
                                     if "choices" in data:
