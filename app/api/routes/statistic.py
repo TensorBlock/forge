@@ -11,6 +11,7 @@ from app.api.dependencies import (
     get_async_db,
     get_current_active_user,
     get_current_active_user_from_clerk,
+    get_user_by_api_key,
 )
 from app.models.user import User
 from app.models.usage_tracker import UsageTracker
@@ -28,7 +29,7 @@ router = APIRouter()
 # I want a query parameter called "offset: <int>" and "limit: <int>"
 @router.get("/usage/realtime", response_model=list[UsageRealtimeResponse])
 async def get_usage_realtime(
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_user_by_api_key),
     db: AsyncSession = Depends(get_async_db),
     offset: int = Query(0, ge=0),
     limit: int = Query(10, ge=1),
