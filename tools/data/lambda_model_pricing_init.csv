@@ -1,0 +1,18 @@
+provider_name,model_name,input_token_price,output_token_price
+lambda,deepseek-r1-0528,0.0005,0.00218
+lambda,deepseek-v3-0324,0.00034,0.00088
+lambda,qwen-3-32b,0.0001,0.0003
+lambda,llama-4-maverick-17b-128e-instruct-fp8,0.00018,0.0006
+lambda,llama-4-scout-17b-16e-instruct,0.00008,0.0003
+lambda,llama-3.1-8b-instruct,0.000025,0.00004
+lambda,llama-3.1-70b-instruct,0.00012,0.0003
+lambda,llama-3.1-405b-instruct,0.0008,0.0008
+lambda,deepseek-llama3.3-70b,0.0002,0.0006
+lambda,llama-3.3-70b-instruct,0.00012,0.0003
+lambda,llama-3.2-3b-instruct,0.000015,0.000025
+lambda,hermes-3-llama-3.1-8b,0.000025,0.00004
+lambda,hermes-3-llama-3.1-70b (fp8),0.00012,0.0003
+lambda,hermes-3-llama-3.1-405b (fp8),0.0008,0.0008
+lambda,lfm-40b,0.00015,0.00015
+lambda,llama3.1-nemotron-70b-instruct,0.00012,0.0003
+lambda,qwen2.5-coder-32b,0.00007,0.00016
