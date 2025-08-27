@@ -39,6 +39,7 @@ async def handle_anthropic_streaming_response_from_openai_stream(
     
     output_token_count = 0
     final_anthropic_stop_reason = None
+    tool_ids: List[str] = []
     
     enc = tiktoken.encoding_for_model("gpt-4")  # Use gpt-4 encoding as approximation
     
@@ -78,19 +79,19 @@ async def handle_anthropic_streaming_response_from_openai_stream(
                 chunk_str = chunk_bytes.decode('utf-8')
                 if chunk_str.strip() == "data: [DONE]":
                     break
-                    
+                
                 if not chunk_str.startswith("data: "):
                     continue
-                    
+                
                 data_str = chunk_str[6:].strip()  # Remove "data: " prefix
                 if not data_str:
                     continue
-                    
+                
                 chunk_data = json.loads(data_str)
                 
                 if not chunk_data.get("choices"):
                     continue
-                    
+                
                 delta = chunk_data["choices"][0].get("delta", {})
                 openai_finish_reason = chunk_data["choices"][0].get("finish_reason")
                 
@@ -207,7 +208,6 @@ async def handle_anthropic_streaming_response_from_openai_stream(
             yield f"event: content_block_stop\ndata: {json.dumps({'type': 'content_block_stop', 'index': text_block_anthropic_idx})}\n\n"
         
         # Collect tool IDs for logging
-        tool_ids = []
         for anthropic_tool_idx in sent_tool_block_starts:
             tool_state_to_finalize = tool_states.get(anthropic_tool_idx)
             if tool_state_to_finalize:
