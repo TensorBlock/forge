@@ -400,9 +400,9 @@ class GoogleAdapter(ProviderAdapter):
                                     choices.append({
                                         "index": c_idx,
                                         "delta": {"content": text_content},
-                                        **({"finish_reason": finish_reason.lower()
+                                        **({"finish_reason": finish_reason.lower()}
                                         if finish_reason
-                                        else {}})
+                                        else {})
                                     })
                                 if not choices:
                                     choices = [{"index": 0, "delta": {"content": ""}}]
