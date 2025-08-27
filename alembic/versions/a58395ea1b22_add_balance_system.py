@@ -1,7 +1,7 @@
 """add balance system
 
 Revision ID: a58395ea1b22
-Revises: 39bcedfae4fe
+Revises: c9f3e548adef
 Create Date: 2025-08-20 22:00:45.743308
 
 """
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = 'a58395ea1b22'
-down_revision = '39bcedfae4fe'
+down_revision = 'c9f3e548adef'
 branch_labels = None
 depends_on = None
 
