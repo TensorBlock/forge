@@ -7,13 +7,13 @@ from .base import ProviderAdapter
 from .bedrock_adapter import BedrockAdapter
 from .cohere_adapter import CohereAdapter
 from .fireworks_adapter import FireworksAdapter
-from .google_adapter import GoogleAdapter
 from .mock_adapter import MockAdapter
 from .openai_adapter import OpenAIAdapter
 from .perplexity_adapter import PerplexityAdapter
 from .tensorblock_adapter import TensorblockAdapter
 from .zhipu_adapter import ZhipuAdapter
 from .vertex_adapter import VertexAdapter
+from .gemini_openai_adapter import GeminiOpenAIAdapter
 from .alibaba_adapter import AlibabaAdapter
 from .zai_adapter import ZAIAdapter
 
@@ -36,7 +36,7 @@ class ProviderAdapterFactory:
         },
         "gemini": {
             "base_url": "https://generativelanguage.googleapis.com/v1beta",
-            "adapter": GoogleAdapter,
+            "adapter": GeminiOpenAIAdapter,
         },
         "xai": {
             "base_url": "https://api.x.ai/v1",
