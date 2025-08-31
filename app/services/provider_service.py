@@ -673,12 +673,16 @@ class ProviderService:
             # https://platform.openai.com/docs/api-reference/chat/object#chat/object-usage
             if isinstance(result, dict) and "usage" in result:
                 usage = result.get("usage", {})
-                input_tokens = usage.get("prompt_tokens", 0)
-                output_tokens = usage.get("completion_tokens", 0)
+                input_tokens = usage.get("prompt_tokens", 0) or input_tokens
+                output_tokens = usage.get("completion_tokens", 0) or output_tokens
+                total_tokens = usage.get("total_tokens", 0) or (input_tokens + output_tokens)
                 prompt_tokens_details = usage.get("prompt_tokens_details", {}) or {}
                 completion_tokens_details = usage.get("completion_tokens_details", {}) or {}
                 cached_tokens = prompt_tokens_details.get("cached_tokens", 0)
-                reasoning_tokens = completion_tokens_details.get("reasoning_tokens", 0)
+                reasoning_tokens = completion_tokens_details.get("reasoning_tokens", 0) or (total_tokens - input_tokens - output_tokens)
+
+                # re-calculate output tokens
+                output_tokens = max(output_tokens, total_tokens - input_tokens - cached_tokens)
 
             asyncio.create_task(
                 update_usage_in_background(
@@ -697,6 +701,7 @@ class ProviderService:
                 approximate_output_tokens = 0
                 output_tokens = 0
                 input_tokens = 0
+                total_tokens = 0
                 cached_tokens = 0
                 reasoning_tokens = 0
                 chunks_processed = 0
@@ -744,14 +749,18 @@ class ProviderService:
                                         usage = data.get("usage", {})
                                         input_tokens = (
                                             usage.get("prompt_tokens", 0) or 0
-                                        )
+                                        ) or input_tokens
                                         output_tokens = (
                                             usage.get("completion_tokens", 0) or 0
-                                        )
+                                        ) or output_tokens
+                                        total_tokens = usage.get("total_tokens", 0) or total_tokens or (input_tokens + output_tokens)
                                         prompt_tokens_details = usage.get("prompt_tokens_details", {}) or {}
                                         completion_tokens_details = usage.get("completion_tokens_details", {}) or {}
-                                        cached_tokens = prompt_tokens_details.get("cached_tokens", 0)
-                                        reasoning_tokens = completion_tokens_details.get("reasoning_tokens", 0)
+                                        cached_tokens = prompt_tokens_details.get("cached_tokens", 0) or cached_tokens
+                                        reasoning_tokens = completion_tokens_details.get("reasoning_tokens", 0) or reasoning_tokens or (total_tokens - input_tokens - output_tokens)
+
+                                        # re-calculate output tokens
+                                        output_tokens = max(output_tokens, total_tokens - input_tokens - cached_tokens)
 
                                     # Extract content from the chunk based on OpenAI format
                                     if "choices" in data:

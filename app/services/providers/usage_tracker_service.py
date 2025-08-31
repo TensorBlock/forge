@@ -75,6 +75,7 @@ class UsageTrackerService:
             usage_tracker.input_tokens = input_tokens
             usage_tracker.output_tokens = output_tokens
             usage_tracker.cached_tokens = cached_tokens
+            usage_tracker.reasoning_tokens = reasoning_tokens
             usage_tracker.updated_at = now
             usage_tracker.cost = price_info['total_cost']
             usage_tracker.currency = price_info['currency']

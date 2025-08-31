@@ -40,20 +40,21 @@ class AnthropicAdapter(ProviderAdapter):
         return self._provider_name
     
     @staticmethod
-    def format_anthropic_usage(usage_data: dict[str, Any]) -> dict[str, Any]:
+    def format_anthropic_usage(usage_data: dict[str, Any], token_usage: dict[str, int]) -> dict[str, Any]:
         if not usage_data:
             return None
 
-        input_tokens = usage_data.get("input_tokens", 0)
-        output_tokens = usage_data.get("output_tokens", 0)
-        cached_tokens = usage_data.get("cache_creation_input_tokens", 0) or 0
-        cached_tokens += usage_data.get("cache_read_input_tokens", 0) or 0
+        token_usage['input_tokens'] += usage_data.get("input_tokens", 0)
+        token_usage['output_tokens'] += usage_data.get("output_tokens", 0)
+        token_usage['cached_tokens'] += usage_data.get("cache_creation_input_tokens", 0) or 0
+        token_usage['cached_tokens'] += usage_data.get("cache_read_input_tokens", 0) or 0
+
         return {
-            "prompt_tokens": input_tokens,
-            "completion_tokens": output_tokens,
-            "total_tokens": input_tokens + output_tokens,
+            "prompt_tokens": token_usage['input_tokens'],
+            "completion_tokens": token_usage['output_tokens'],
+            "total_tokens": token_usage['input_tokens'] + token_usage['output_tokens'],
             "prompt_tokens_details": {
-                "cached_tokens": cached_tokens,
+                "cached_tokens": token_usage['cached_tokens'],
             },
         }
     
@@ -445,6 +446,11 @@ class AnthropicAdapter(ProviderAdapter):
         async def stream_response() -> AsyncGenerator[bytes, None]:
             # Store parts of usage info as they arrive
             request_id = f"chatcmpl-{uuid.uuid4()}"
+            token_usage = {
+                'input_tokens': 0,
+                "output_tokens": 0,
+                "cached_tokens": 0,
+            }
 
             async with (
                 aiohttp.ClientSession() as session,
@@ -489,7 +495,7 @@ class AnthropicAdapter(ProviderAdapter):
                             # Capture Input Tokens from message_start
                             if event_type == "message_start":
                                 message_data = data.get("message", {})
-                                usage_data = AnthropicAdapter.format_anthropic_usage(message_data.get("usage", {}))
+                                usage_data = AnthropicAdapter.format_anthropic_usage(message_data.get("usage", {}), token_usage)
                                 if message_data:
                                     openai_chunk = {
                                         "id": request_id,
@@ -512,7 +518,7 @@ class AnthropicAdapter(ProviderAdapter):
                                 # Handle start of content blocks (text or tool_use)
                                 content_block = data.get("content_block", {})
 
-                                usage_data = AnthropicAdapter.format_anthropic_usage(data.get("usage", {}))
+                                usage_data = AnthropicAdapter.format_anthropic_usage(data.get("usage", {}), token_usage)
                                 if content_block.get("type") == "tool_use":
                                     # Start of a tool call
                                     openai_chunk = {
@@ -551,7 +557,7 @@ class AnthropicAdapter(ProviderAdapter):
                             elif event_type == "content_block_delta":
                                 delta = data.get("delta", {})
 
-                                usage_data = AnthropicAdapter.format_anthropic_usage(data.get("usage", {}))
+                                usage_data = AnthropicAdapter.format_anthropic_usage(data.get("usage", {}), token_usage)
                                 if delta.get("type") == "text_delta":
                                     # Text content delta
                                     delta_content = delta.get("text", "")
@@ -602,7 +608,7 @@ class AnthropicAdapter(ProviderAdapter):
                             elif event_type == "message_delta":
                                 delta_data = data.get("delta", {})
 
-                                usage_data = AnthropicAdapter.format_anthropic_usage(data.get("usage", {}))
+                                usage_data = AnthropicAdapter.format_anthropic_usage(data.get("usage", {}), token_usage)
 
                                 anthropic_stop_reason = delta_data.get("stop_reason")
                                 if anthropic_stop_reason:
@@ -634,7 +640,7 @@ class AnthropicAdapter(ProviderAdapter):
                                         anthropic_stop_reason, "stop"
                                     )
 
-                                usage_data = AnthropicAdapter.format_anthropic_usage(data.get("usage", {}))
+                                usage_data = AnthropicAdapter.format_anthropic_usage(data.get("usage", {}), token_usage)
 
                             # --- Yielding Logic ---
                             if openai_chunk:
@@ -735,7 +741,12 @@ class AnthropicAdapter(ProviderAdapter):
                         )
 
                 # https://docs.anthropic.com/en/api/messages#response-usage
-                usage_data = AnthropicAdapter.format_anthropic_usage(anthropic_response.get("usage", {}))
+                token_usage = {
+                    'input_tokens': 0,
+                    'output_tokens': 0,
+                    'cached_tokens': 0,
+                }
+                usage_data = AnthropicAdapter.format_anthropic_usage(anthropic_response.get("usage", {}), token_usage)
                 return {
                     "id": completion_id,
                     "object": "chat.completion",
