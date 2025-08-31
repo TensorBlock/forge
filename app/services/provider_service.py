@@ -682,7 +682,7 @@ class ProviderService:
                 reasoning_tokens = completion_tokens_details.get("reasoning_tokens", 0) or (total_tokens - input_tokens - output_tokens)
 
                 # re-calculate output tokens
-                output_tokens = max(output_tokens, total_tokens - input_tokens - cached_tokens)
+                output_tokens = max(output_tokens, total_tokens - input_tokens)
 
             asyncio.create_task(
                 update_usage_in_background(
@@ -760,7 +760,7 @@ class ProviderService:
                                         reasoning_tokens = completion_tokens_details.get("reasoning_tokens", 0) or reasoning_tokens or (total_tokens - input_tokens - output_tokens)
 
                                         # re-calculate output tokens
-                                        output_tokens = max(output_tokens, total_tokens - input_tokens - cached_tokens)
+                                        output_tokens = max(output_tokens, total_tokens - input_tokens)
 
                                     # Extract content from the chunk based on OpenAI format
                                     if "choices" in data:
