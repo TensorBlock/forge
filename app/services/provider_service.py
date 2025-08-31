@@ -742,16 +742,16 @@ class ProviderService:
                                             f"Found usage data in chunk: {data['usage']}"
                                         )
                                         usage = data.get("usage", {})
-                                        input_tokens += (
+                                        input_tokens = (
                                             usage.get("prompt_tokens", 0) or 0
                                         )
-                                        output_tokens += (
+                                        output_tokens = (
                                             usage.get("completion_tokens", 0) or 0
                                         )
                                         prompt_tokens_details = usage.get("prompt_tokens_details", {}) or {}
                                         completion_tokens_details = usage.get("completion_tokens_details", {}) or {}
-                                        cached_tokens += prompt_tokens_details.get("cached_tokens", 0)
-                                        reasoning_tokens += completion_tokens_details.get("reasoning_tokens", 0)
+                                        cached_tokens = prompt_tokens_details.get("cached_tokens", 0)
+                                        reasoning_tokens = completion_tokens_details.get("reasoning_tokens", 0)
 
                                     # Extract content from the chunk based on OpenAI format
                                     if "choices" in data:
