@@ -156,11 +156,11 @@ def process_openai_streaming_response(response: str, result: dict):
         total_tokens = usage.get("total_tokens", 0) or (prompt_tokens + completion_tokens)
         cached_tokens = usage.get("prompt_tokens_details", {}).get("cached_tokens", 0)
         reasoning_tokens = usage.get("completion_tokens_details", {}).get("reasoning_tokens", 0)
-        result_usage["prompt_tokens"] += prompt_tokens
-        result_usage["completion_tokens"] += completion_tokens
-        result_usage["total_tokens"] += total_tokens
-        result_usage["prompt_tokens_details"]["cached_tokens"] += cached_tokens
-        result_usage["completion_tokens_details"]["reasoning_tokens"] += reasoning_tokens
+        result_usage["prompt_tokens"] = prompt_tokens
+        result_usage["completion_tokens"] = completion_tokens
+        result_usage["total_tokens"] = total_tokens
+        result_usage["prompt_tokens_details"]["cached_tokens"] = cached_tokens
+        result_usage["completion_tokens_details"]["reasoning_tokens"] = reasoning_tokens
         result["usage"] = result_usage
 
 

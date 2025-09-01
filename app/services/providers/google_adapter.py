@@ -344,9 +344,6 @@ class GoogleAdapter(ProviderAdapter):
 
                 # Process response in chunks
                 buffer = ""
-                # According to https://ai.google.dev/api/generate-content#UsageMetadata
-                # thoughtsTokenCount is output only. We should only record it once
-                logged_thoughts_tokens = False
                 async for chunk in response.content.iter_chunks():
                     if not chunk[0]:  # Empty chunk
                         continue
@@ -379,10 +376,6 @@ class GoogleAdapter(ProviderAdapter):
                                 usage_data = self.format_google_usage(
                                     json_obj["usageMetadata"]
                                 )
-                                if logged_thoughts_tokens:
-                                    del usage_data['completion_tokens_details']
-                                elif usage_data.get('completion_tokens_details', {}).get('reasoning_tokens'):
-                                    logged_thoughts_tokens = True
 
 
                             if "candidates" in json_obj:
