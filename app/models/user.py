@@ -32,5 +32,6 @@ class User(Base):
     provider_keys = relationship(
         "ProviderKey", back_populates="user", cascade="all, delete-orphan"
     )
+    wallet = relationship("Wallet", back_populates="user", uselist=False)
     # Optional: Add relationship to ApiRequestLog if needed
     # api_logs = relationship("ApiRequestLog")
