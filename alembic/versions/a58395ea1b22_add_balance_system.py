@@ -30,13 +30,6 @@ def upgrade() -> None:
     )
     op.add_column('provider_keys', sa.Column('billable', sa.Boolean(), nullable=False, server_default='FALSE'))
 
-    op.execute(sa.text("""
-        update provider_keys
-        set billable = true
-        where lower(provider_name) = 'tensorblock'
-    """))
-
-
 def downgrade() -> None:
     op.drop_table('wallets')
     op.drop_column('provider_keys', 'billable')
