@@ -855,6 +855,7 @@ async def create_default_tensorblock_provider_for_user(
             encrypted_api_key=encrypt_api_key(serialized_api_key_config),
             user_id=user_id,
             base_url=tensorblock_base_url,
+            billable=True,
             model_mapping=None,  # TensorBlock adapter handles model mapping internally
         )
 

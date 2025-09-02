@@ -193,10 +193,10 @@ class WalletService:
     @staticmethod
     async def wallet_precheck(user_id: int, db: AsyncSession, provider_key_id: int) -> None:
         """Check wallet balance and ensure user can make requests"""
-        provider_key = await db.execute(select(ProviderKey).filter(ProviderKey.id == provider_key_id))
+        provider_key = await db.execute(select(ProviderKey).filter(ProviderKey.id == provider_key_id, ProviderKey.billable))
         provider_key = provider_key.scalar_one_or_none()
         # If the provider key is not billable, we don't need to check the wallet
-        if not provider_key or not provider_key.billable:
+        if not provider_key:
             return
 
         await WalletService.ensure_wallet(db, user_id)
