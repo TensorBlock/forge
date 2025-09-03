@@ -137,7 +137,7 @@ async def create_message_proxy(
             request,
             422,
             AnthropicErrorType.INVALID_REQUEST,
-            f"Invalid request body: {e.errors()}",
+            f"Invalid request body: {str(e.errors())}",
             e,
         )
 
@@ -360,7 +360,7 @@ async def count_tokens_endpoint(
         raise HTTPException(status_code=400, detail="Invalid JSON body.") from e
     except ValidationError as e:
         raise HTTPException(
-            status_code=422, detail=f"Invalid request body: {e.errors()}"
+            status_code=422, detail=f"Invalid request body: {str(e.errors())}"
         ) from e
 
     token_count = count_tokens_for_anthropic_request(
