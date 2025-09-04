@@ -308,7 +308,13 @@ async def handle_payment_succeeded(event: dict, db: AsyncSession):
         amount = session['amount_total']
         currency = session['currency'].upper()
         status = session['status']
-        
+        payment_status = session['payment_status']
+
+        if status == "complete" and payment_status == "paid":
+            status = "completed"
+        else:
+            status = payment_status or "failed"
+
         # update the corresponding StripePayment db record and return the user id
         result = await db.execute(
             update(StripePayment).where(StripePayment.id == session_id).values(
@@ -321,6 +327,10 @@ async def handle_payment_succeeded(event: dict, db: AsyncSession):
         user_id = result.scalar_one_or_none()
         if not user_id:
             logger.warning(f"Stripe payment not found for id {id}")
+            return
+        
+        if status != "completed":
+            logger.warning(f"Received payment success event for non-completed session: {session_id}")
             return
 
         # Convert cents to dollars for USD
@@ -353,11 +363,12 @@ async def handle_payment_failed(event: dict, db: AsyncSession):
         
         session_id = session['id']
         status = session['status']
+        payment_status = session['payment_status']
         
         # update the corresponding StripePayment db record and return the user id
         result = await db.execute(
             update(StripePayment).where(StripePayment.id == session_id).values(
-                status = status,
+                status = payment_status or status,
                 raw_data = session,
             ).returning(StripePayment.user_id)
         )
