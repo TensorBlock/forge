@@ -17,6 +17,7 @@ dependencies = [
     "uvicorn>=0.22.0",
     "pydantic>=2.0.0",
     "python-jose>=3.3.0",
+    "stripe",
     "passlib>=1.7.4",
     "python-multipart>=0.0.5",
     "sqlalchemy[asyncio]>=2.0.0",

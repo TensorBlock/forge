@@ -3,15 +3,15 @@ import os
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
+import stripe
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from svix import Webhook, WebhookVerificationError
 
 from app.core.database import get_async_db
 from app.core.logger import get_logger
-from app.core.security import generate_forge_api_key
 from app.models.user import User
+from app.models.stripe import StripePayment
 from app.services.provider_service import create_default_tensorblock_provider_for_user
 from app.services.wallet_service import WalletService
 
@@ -248,9 +248,9 @@ async def stripe_webhook_handler(request: Request, db: AsyncSession = Depends(ge
     Handle Stripe webhooks for payment events.
     
     Key events to handle:
-    - payment_intent.succeeded: Credit wallet balance
-    - payment_intent.payment_failed: Log failed payment
-    - invoice.payment_failed: Handle subscription payment failure
+    - checkout.session.async_payment_succeeded / checkout.session.completed: Credit wallet balance
+    - checkout.session.async_payment_failed: Log failed payment
+    - checkout.session.expired: Log expired payment
     """
     # Get the request body and signature
     payload = await request.body()
@@ -261,44 +261,33 @@ async def stripe_webhook_handler(request: Request, db: AsyncSession = Depends(ge
             status_code=status.HTTP_401_UNAUTHORIZED, 
             detail="Missing Stripe signature header"
         )
-
-    # NOTE: For production, you would verify the webhook signature here
-    # This is a placeholder for the Stripe webhook verification
-    # Example:
-    # import stripe
-    # try:
-    #     event = stripe.Webhook.construct_event(
-    #         payload, sig_header, STRIPE_WEBHOOK_SECRET
-    #     )
-    # except ValueError:
-    #     raise HTTPException(status_code=400, detail="Invalid payload")
-    # except stripe.error.SignatureVerificationError:
-    #     raise HTTPException(status_code=400, detail="Invalid signature")
+    
+    try:
+        event = stripe.Webhook.construct_event(
+            payload, sig_header, STRIPE_WEBHOOK_SECRET
+        )
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid payload")
+    except stripe.error.SignatureVerificationError:
+        raise HTTPException(status_code=400, detail="Invalid signature")
 
     try:
         # For now, parse as JSON (would use verified event in production)
-        event_data = json.loads(payload)
-        event_type = event_data.get("type")
+        event_type = event.get("type")
         
         logger.info(f"Received Stripe webhook: {event_type}")
 
         # Handle different event types
-        if event_type == "payment_intent.succeeded":
-            await handle_payment_succeeded(event_data, db)
-        elif event_type == "payment_intent.payment_failed":
-            await handle_payment_failed(event_data, db)
-        elif event_type == "invoice.payment_failed":
-            await handle_invoice_payment_failed(event_data, db)
+        if event_type in ["checkout.session.async_payment_succeeded", "checkout.session.completed"]:
+            await handle_payment_succeeded(event, db)
+        elif event_type == "checkout.session.async_payment_failed":
+            await handle_payment_failed(event, db)
+        elif event_type == "checkout.session.expired":
+            await handle_payment_expired(event, db)
         else:
             logger.info(f"Unhandled Stripe event type: {event_type}")
 
         return {"status": "success", "message": f"Event {event_type} processed"}
-
-    except json.JSONDecodeError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, 
-            detail="Invalid JSON payload"
-        )
     except Exception as e:
         logger.error(f"Error processing Stripe webhook: {e}", exc_info=True)
         raise HTTPException(
@@ -307,70 +296,119 @@ async def stripe_webhook_handler(request: Request, db: AsyncSession = Depends(ge
         )
 
 
-async def handle_payment_succeeded(event_data: dict, db: AsyncSession):
+async def handle_payment_succeeded(event: dict, db: AsyncSession):
     """Handle successful payment - credit wallet balance"""
     try:
-        payment_intent = event_data.get("data", {}).get("object", {})
-        amount = payment_intent.get("amount", 0)  # Amount in cents
-        currency = payment_intent.get("currency", "usd").upper()
-        customer_id = payment_intent.get("customer")
+        session = event.get("data", {}).get("object", {})
+        if not session:
+            logger.warning("Checkout payment intent not found in event")
+            return
+
+        session_id = session['id']
+        amount = session['amount_total']
+        currency = session['currency'].upper()
+        status = session['status']
+        payment_status = session['payment_status']
+
+        if status == "complete" and payment_status == "paid":
+            status = "completed"
+        else:
+            status = payment_status or "failed"
+
+        # update the corresponding StripePayment db record and return the user id
+        result = await db.execute(
+            update(StripePayment).where(StripePayment.id == session_id).values(
+                status = status,
+                amount = amount,
+                currency = currency,
+                raw_data = session,
+            ).returning(StripePayment.user_id)
+        )
+        user_id = result.scalar_one_or_none()
+        if not user_id:
+            logger.warning(f"Stripe payment not found for id {id}")
+            return
         
+        if status != "completed":
+            logger.warning(f"Received payment success event for non-completed session: {session_id}")
+            return
+
         # Convert cents to dollars for USD
         if currency == "USD":
             amount_decimal = amount / 100.0
         else:
             amount_decimal = amount  # Handle other currencies as needed
         
-        # TODO: Map customer_id to user_id
-        # For now, this is a placeholder - you'd need to implement customer mapping
-        # user_id = get_user_id_from_stripe_customer(customer_id)
+        logger.info(f"Payment succeeded: {amount_decimal} {currency} for customer {user_id}")
         
-        logger.info(f"Payment succeeded: {amount_decimal} {currency} for customer {customer_id}")
-        
-        # Uncomment when customer mapping is implemented:
-        # await WalletService.adjust(
-        #     db, 
-        #     user_id, 
-        #     amount_decimal, 
-        #     f"deposit:stripe:{payment_intent.get('id')}", 
-        #     currency
-        # )
+        await WalletService.adjust(
+            db, 
+            user_id, 
+            amount_decimal, 
+            f"deposit:stripe:{session_id}", 
+            currency
+        )
         
     except Exception as e:
         logger.error(f"Failed to process payment success: {e}", exc_info=True)
         raise
 
-
-async def handle_payment_failed(event_data: dict, db: AsyncSession):
+async def handle_payment_failed(event: dict, db: AsyncSession):
     """Handle failed payment"""
     try:
-        payment_intent = event_data.get("data", {}).get("object", {})
-        customer_id = payment_intent.get("customer")
+        session = event.get("data", {}).get("object", {})
+        if not session:
+            logger.warning("Checkout session not found in event")
+            return
         
-        logger.warning(f"Payment failed for customer {customer_id}")
+        session_id = session['id']
+        status = session['status']
+        payment_status = session['payment_status']
         
-        # TODO: Implement failure handling logic
-        # - Notify user
-        # - Update payment status
-        # - Handle retry logic
+        # update the corresponding StripePayment db record and return the user id
+        result = await db.execute(
+            update(StripePayment).where(StripePayment.id == session_id).values(
+                status = payment_status or status,
+                raw_data = session,
+            ).returning(StripePayment.user_id)
+        )
+        user_id = result.scalar_one_or_none()
+        if not user_id:
+            logger.warning(f"Stripe payment not found for id {session_id}")
+            return
+        
+        logger.warning(f"Payment failed: {session_id} for customer {user_id}")
         
     except Exception as e:
-        logger.error(f"Failed to process payment failure: {e}", exc_info=True)
+        logger.error(f"Failed to process payment failed: {e}", exc_info=True)
         raise
+    
 
-
-async def handle_invoice_payment_failed(event_data: dict, db: AsyncSession):
-    """Handle failed invoice payment - may need to block account"""
+async def handle_payment_expired(event: dict, db: AsyncSession):
+    """Handle expired payment"""
     try:
-        invoice = event_data.get("data", {}).get("object", {})
-        customer_id = invoice.get("customer")
+        session = event.get("data", {}).get("object", {})
+        if not session:
+            logger.warning("Checkout session not found in event")
+            return
         
-        logger.warning(f"Invoice payment failed for customer {customer_id}")
+        session_id = session['id']
+        status = session['status']
         
-        # TODO: Map customer_id to user_id and potentially block account
-        # user_id = get_user_id_from_stripe_customer(customer_id)
-        # await WalletService.set_blocked(db, user_id, True)
+        # update the corresponding StripePayment db record and return the user id
+        result = await db.execute(
+            update(StripePayment).where(StripePayment.id == session_id).values(
+                status = status,
+                raw_data = session,
+            ).returning(StripePayment.user_id)
+        )
+        user_id = result.scalar_one_or_none()
+        if not user_id:
+            logger.warning(f"Stripe payment not found for id {session_id}")
+            return
         
+        logger.warning(f"Payment expired: {session_id} for customer {user_id}")
+
     except Exception as e:
-        logger.error(f"Failed to process invoice payment failure: {e}", exc_info=True)
+        logger.error(f"Failed to process payment expired: {e}", exc_info=True)
         raise
