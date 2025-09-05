@@ -34,7 +34,7 @@ async def get_wallet_balance(
         await WalletService.ensure_wallet(db, user.id)
         return WalletResponse(balance=Decimal("0"), blocked=False, currency="USD", total_spent=Decimal("0"), total_earned=Decimal("0"))
     
-    result = await db.execute(select(func.sum(UsageTracker.cost)).where(UsageTracker.user_id == user.id, UsageTracker.updated_at.is_not(None)))
+    result = await db.execute(select(func.sum(UsageTracker.cost)).where(UsageTracker.user_id == user.id, UsageTracker.updated_at.is_not(None), UsageTracker.billable))
     total_spent = result.scalar_one_or_none() or "0"
     result = await db.execute(select(func.sum(StripePayment.amount)).where(StripePayment.user_id == user.id, StripePayment.status == "completed"))
     total_earned = result.scalar_one_or_none() or "0"
