@@ -317,7 +317,13 @@ async def handle_payment_succeeded(event: dict, db: AsyncSession):
 
         # update the corresponding StripePayment db record and return the user id
         result = await db.execute(
-            update(StripePayment).where(StripePayment.id == session_id).values(
+            update(StripePayment)
+            .where(
+                StripePayment.id == session_id,
+                # Only update if the status is not completed
+                StripePayment.status != "completed",
+            )
+            .values(
                 status = status,
                 amount = amount,
                 currency = currency,
@@ -326,7 +332,7 @@ async def handle_payment_succeeded(event: dict, db: AsyncSession):
         )
         user_id = result.scalar_one_or_none()
         if not user_id:
-            logger.warning(f"Stripe payment not found for id {id}")
+            logger.warning(f"Updated stripe payment not found for session: {session_id} with status {status} and payment_status {payment_status}")
             return
         
         if status != "completed":
