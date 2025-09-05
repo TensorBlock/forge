@@ -8,7 +8,6 @@ from fastapi import HTTPException
 
 from app.core.logger import get_logger
 from app.models.wallet import Wallet
-from app.models.provider_key import ProviderKey
 
 logger = get_logger(name="wallet_service")
 
@@ -62,6 +61,10 @@ class WalletService:
         currency: str = "USD"
     ) -> Dict[str, any]:
         """Adjust wallet balance with optimistic locking and retry"""
+
+        # enforce delta to be Decimal
+        delta = Decimal(delta)
+
         for attempt in range(MAX_RETRIES):
             try:
                 # Read current wallet state including version
@@ -191,14 +194,8 @@ class WalletService:
     # Helper: perform wallet precheck
     # -------------------------------------------------------------
     @staticmethod
-    async def wallet_precheck(user_id: int, db: AsyncSession, provider_key_id: int) -> None:
+    async def wallet_precheck(user_id: int, db: AsyncSession) -> None:
         """Check wallet balance and ensure user can make requests"""
-        provider_key = await db.execute(select(ProviderKey).filter(ProviderKey.id == provider_key_id, ProviderKey.billable))
-        provider_key = provider_key.scalar_one_or_none()
-        # If the provider key is not billable, we don't need to check the wallet
-        if not provider_key:
-            return
-
         await WalletService.ensure_wallet(db, user_id)
         check_result = await WalletService.precheck(db, user_id)
         

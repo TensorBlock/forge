@@ -2,7 +2,7 @@ import datetime
 from datetime import UTC
 import uuid
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, DECIMAL
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, DECIMAL, Boolean
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
 from .base import Base
@@ -25,5 +25,6 @@ class UsageTracker(Base):
     cost = Column(DECIMAL(12, 8), nullable=True)
     currency = Column(String(3), nullable=True)
     pricing_source = Column(String(255), nullable=True)
+    billable = Column(Boolean, nullable=False, default=False)
 
     provider_key = relationship("ProviderKey", back_populates="usage_tracker")

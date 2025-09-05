@@ -18,6 +18,7 @@ from app.exceptions.exceptions import (
     InvalidForgeKeyException,
 )
 from app.models.user import User
+from app.models.provider_key import ProviderKey
 from app.core.database import get_db_session
 from app.services.wallet_service import WalletService
 
@@ -193,9 +194,6 @@ class ProviderService:
                 f"Loading provider keys from database for user {self.user_id} (sync)"
             )
 
-        # Query ProviderKey directly by user_id
-        from app.models.provider_key import ProviderKey
-
         result = await self.db.execute(
             select(ProviderKey).filter(
                 ProviderKey.user_id == self.user_id, ProviderKey.deleted_at == None
@@ -252,9 +250,6 @@ class ProviderService:
             logger.debug(
                 f"Loading provider keys from database for user {self.user_id} (async)"
             )
-
-        # Query ProviderKey directly by user_id
-        from app.models.provider_key import ProviderKey
 
         result = await self.db.execute(
             select(ProviderKey).filter(
@@ -597,7 +592,10 @@ class ProviderService:
         # Process the request through the adapter
         usage_tracker_id = None
         if self.api_key_id is not None and provider_key_id is not None:
-            await WalletService.wallet_precheck(self.user_id, self.db, provider_key_id)
+            result = await self.db.execute(select(ProviderKey.billable).where(ProviderKey.id == provider_key_id))
+            billable = result.scalar_one_or_none() or False
+            if billable:
+                await WalletService.wallet_precheck(self.user_id, self.db)
             usage_tracker_id = await UsageTrackerService.start_tracking_usage(
                 db=self.db,
                 user_id=self.user_id,
@@ -605,6 +603,7 @@ class ProviderService:
                 forge_key_id=self.api_key_id,
                 model=actual_model,
                 endpoint=endpoint,
+                billable=billable,
             )
         else:
             # For api like list models, we don't have usage tracking

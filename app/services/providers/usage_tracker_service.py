@@ -24,6 +24,7 @@ class UsageTrackerService:
         forge_key_id: int,
         model: str,
         endpoint: str,
+        billable: bool = False,
     ) -> int:
         try:
             usage_tracker = UsageTracker(
@@ -33,6 +34,7 @@ class UsageTrackerService:
                 model=model,
                 endpoint=endpoint,
                 created_at=datetime.now(UTC),
+                billable=billable,
             )
             db.add(usage_tracker)
             await db.commit()
@@ -83,7 +85,7 @@ class UsageTrackerService:
             usage_tracker.pricing_source = price_info['pricing_source']
             
             # Deduct from wallet balance if the provider is not free
-            if price_info['total_cost'] and price_info['total_cost'] > 0 and usage_tracker.provider_key.billable:
+            if price_info['total_cost'] and price_info['total_cost'] > 0 and usage_tracker.billable:
                 try:
                     result = await WalletService.adjust(
                         db, 
