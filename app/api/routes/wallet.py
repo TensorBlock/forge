@@ -35,11 +35,13 @@ async def get_wallet_balance(
         return WalletResponse(balance=Decimal("0"), blocked=False, currency="USD", total_spent=Decimal("0"), total_earned=Decimal("0"))
     
     result = await db.execute(select(func.sum(UsageTracker.cost)).where(UsageTracker.user_id == user.id, UsageTracker.updated_at.is_not(None), UsageTracker.billable))
-    total_spent = result.scalar_one_or_none() or "0"
+    total_spent = result.scalar_one_or_none() or Decimal("0")
     result = await db.execute(select(func.sum(StripePayment.amount)).where(StripePayment.user_id == user.id, StripePayment.status == "completed"))
-    total_earned = result.scalar_one_or_none() or "0"
+    total_earned = result.scalar_one_or_none() or 0
+    # Convert cents to dollars for USD
+    total_earned = Decimal(total_earned / 100.0)
     
-    return WalletResponse(**wallet, total_spent=Decimal(total_spent), total_earned=Decimal(total_earned))
+    return WalletResponse(**wallet, total_spent=total_spent, total_earned=total_earned)
 
 @router.get("/balance/clerk", response_model=WalletResponse)
 async def get_wallet_balance_clerk(
