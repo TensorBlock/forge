@@ -51,6 +51,7 @@ async def get_wallet_balance_clerk(
     return await get_wallet_balance(user, db)
 
 class TransactionHistoryItem(BaseModel):
+    transaction_id: str
     currency: str
     amount: Decimal
     status: str
@@ -75,6 +76,7 @@ async def get_wallet_transactions_history(
     # I would also want to get the total count of the transactions within one sql query
     query = (
         select(
+            StripePayment.id,
             StripePayment.currency,
             StripePayment.amount,
             StripePayment.status,
@@ -92,6 +94,7 @@ async def get_wallet_transactions_history(
     return TransactionHistoryResponse(
         items=[
             TransactionHistoryItem(
+                transaction_id=transaction.id,
                 currency=transaction.currency,
                 # Convert cents to dollars for USD
                 amount=transaction.amount / 100.0 if transaction.currency == "USD" else transaction.amount,
