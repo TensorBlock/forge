@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc, func
+from sqlalchemy import select, desc, func, case
 from sqlalchemy.sql.functions import coalesce
 from sqlalchemy import or_
 from datetime import datetime, timedelta, UTC
@@ -27,12 +27,12 @@ router = APIRouter()
 
 
 # I want a query parameter called "offset: <int>" and "limit: <int>"
-@router.get("/usage/realtime", response_model=list[UsageRealtimeResponse])
+@router.get("/usage/realtime", response_model=UsageRealtimeResponse)
 async def get_usage_realtime(
     current_user: User = Depends(get_user_by_api_key),
     db: AsyncSession = Depends(get_async_db),
-    offset: int = Query(0, ge=0),
-    limit: int = Query(10, ge=1),
+    page_index: int = Query(0, ge=0),
+    page_size: int = Query(10, ge=1),
     forge_key: str = Query(None, min_length=1),
     provider_name: str = Query(None, min_length=1),
     model_name: str = Query(None, min_length=1),
@@ -66,9 +66,11 @@ async def get_usage_realtime(
             UsageTracker.output_tokens.label("output_tokens"),
             UsageTracker.cached_tokens.label("cached_tokens"),
             UsageTracker.cost.label("cost"),
+            UsageTracker.billable.label("billable"),
             func.extract(
                 "epoch", UsageTracker.updated_at - UsageTracker.created_at
             ).label("duration"),
+            func.count().over().label("total"),
         )
         .join(ProviderKey, UsageTracker.provider_key_id == ProviderKey.id)
         .join(ForgeApiKey, UsageTracker.forge_key_id == ForgeApiKey.id)
@@ -87,8 +89,8 @@ async def get_usage_realtime(
             UsageTracker.updated_at.is_not(None),
         )
         .order_by(desc(UsageTracker.created_at))
-        .offset(offset)
-        .limit(limit)
+        .offset(page_index * page_size)
+        .limit(page_size)
     )
 
     # Execute the query
@@ -96,9 +98,10 @@ async def get_usage_realtime(
     rows = result.fetchall()
 
     # Convert to list of dictionaries
-    usage_stats = []
+    items = []
+    total = 0
     for row in rows:
-        usage_stats.append(
+        items.append(
             {
                 "timestamp": row.timestamp,
                 "forge_key": row.forge_key,
@@ -109,20 +112,27 @@ async def get_usage_realtime(
                 "output_tokens": row.output_tokens,
                 "cached_tokens": row.cached_tokens,
                 "cost": decimal.Decimal(row.cost).normalize(),
+                "billable": row.billable,
                 "duration": round(float(row.duration), 2)
                 if row.duration is not None
                 else 0.0,
             }
         )
-    return [UsageRealtimeResponse(**usage_stat) for usage_stat in usage_stats]
+        total = row.total
+    return UsageRealtimeResponse(
+        items=items,
+        total=total,
+        page_size=page_size,
+        page_index=page_index,
+    )
 
 
-@router.get("/usage/realtime/clerk", response_model=list[UsageRealtimeResponse])
+@router.get("/usage/realtime/clerk", response_model=UsageRealtimeResponse)
 async def get_usage_realtime_clerk(
     current_user: User = Depends(get_current_active_user_from_clerk),
     db: AsyncSession = Depends(get_async_db),
-    offset: int = Query(0, ge=0),
-    limit: int = Query(10, ge=1),
+    page_index: int = Query(0, ge=0),
+    page_size: int = Query(10, ge=1),
     forge_key: str = Query(None, min_length=1),
     provider_name: str = Query(None, min_length=1),
     model_name: str = Query(None, min_length=1),
@@ -132,8 +142,8 @@ async def get_usage_realtime_clerk(
     return await get_usage_realtime(
         current_user,
         db,
-        offset,
-        limit,
+        page_index,
+        page_size,
         forge_key,
         provider_name,
         model_name,
@@ -186,6 +196,7 @@ async def get_usage_summary(
             func.sum(UsageTracker.output_tokens).label("output_tokens"),
             func.sum(UsageTracker.cached_tokens).label("cached_tokens"),
             func.sum(UsageTracker.cost).label("cost"),
+            func.sum(case((UsageTracker.billable, UsageTracker.cost), else_=0)).label("charged_cost"),
         )
         .join(ForgeApiKey, UsageTracker.forge_key_id == ForgeApiKey.id)
         .where(
@@ -208,6 +219,7 @@ async def get_usage_summary(
                 "breakdown": [],
                 "total_tokens": 0,
                 "total_cost": 0,
+                "total_charged_cost": 0,
                 "total_input_tokens": 0,
                 "total_output_tokens": 0,
                 "total_cached_tokens": 0,
@@ -217,6 +229,7 @@ async def get_usage_summary(
                 "forge_key": row.forge_key,
                 "tokens": row.tokens,
                 "cost": decimal.Decimal(row.cost).normalize(),
+                "charged_cost": decimal.Decimal(row.charged_cost).normalize(),
                 "input_tokens": row.input_tokens,
                 "output_tokens": row.output_tokens,
                 "cached_tokens": row.cached_tokens,
@@ -225,6 +238,9 @@ async def get_usage_summary(
         data_points[row.time_point]["total_tokens"] += row.tokens
         data_points[row.time_point]["total_cost"] += decimal.Decimal(
             row.cost
+        ).normalize()
+        data_points[row.time_point]["total_charged_cost"] += decimal.Decimal(
+            row.charged_cost
         ).normalize()
         data_points[row.time_point]["total_input_tokens"] += row.input_tokens
         data_points[row.time_point]["total_output_tokens"] += row.output_tokens
@@ -236,6 +252,7 @@ async def get_usage_summary(
             breakdown=data_point["breakdown"],
             total_tokens=data_point["total_tokens"],
             total_cost=data_point["total_cost"],
+            total_charged_cost=data_point["total_charged_cost"],
             total_input_tokens=data_point["total_input_tokens"],
             total_output_tokens=data_point["total_output_tokens"],
             total_cached_tokens=data_point["total_cached_tokens"],
@@ -292,6 +309,7 @@ async def get_forge_keys_usage(
             func.sum(UsageTracker.output_tokens).label("output_tokens"),
             func.sum(UsageTracker.cached_tokens).label("cached_tokens"),
             func.sum(UsageTracker.cost).label("cost"),
+            func.sum(case((UsageTracker.billable, UsageTracker.cost), else_=0)).label("charged_cost"),
         )
         .join(ForgeApiKey, UsageTracker.forge_key_id == ForgeApiKey.id)
         .where(
@@ -311,6 +329,7 @@ async def get_forge_keys_usage(
             forge_key=row.forge_key,
             tokens=row.tokens,
             cost=decimal.Decimal(row.cost).normalize(),
+            charged_cost=decimal.Decimal(row.charged_cost).normalize(),
             input_tokens=row.input_tokens,
             output_tokens=row.output_tokens,
             cached_tokens=row.cached_tokens,

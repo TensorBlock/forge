@@ -12,7 +12,7 @@ def mask_forge_name_or_key(v: str) -> str:
     # Otherwise, return the original value (user customized name)
     return v
 
-class UsageRealtimeResponse(BaseModel):
+class UsageRealtimeItem(BaseModel):
     timestamp: datetime | str
     forge_key: str
     provider_name: str
@@ -23,6 +23,7 @@ class UsageRealtimeResponse(BaseModel):
     cached_tokens: int
     duration: float
     cost: decimal.Decimal
+    billable: bool
     
     @field_validator('forge_key')
     @classmethod
@@ -36,11 +37,17 @@ class UsageRealtimeResponse(BaseModel):
             return v
         return v.isoformat()
 
+class UsageRealtimeResponse(BaseModel):
+    total: int
+    items: list[UsageRealtimeItem]
+    page_size: int
+    page_index: int
 
 class UsageSummaryBreakdown(BaseModel):
     forge_key: str
     tokens: int
     cost: decimal.Decimal
+    charged_cost: decimal.Decimal
     input_tokens: int
     output_tokens: int
     cached_tokens: int
@@ -56,6 +63,7 @@ class UsageSummaryResponse(BaseModel):
     breakdown: list[UsageSummaryBreakdown]
     total_tokens: int
     total_cost: decimal.Decimal
+    total_charged_cost: decimal.Decimal
     total_input_tokens: int
     total_output_tokens: int
     total_cached_tokens: int
@@ -72,6 +80,7 @@ class ForgeKeysUsageSummaryResponse(BaseModel):
     forge_key: str
     tokens: int
     cost: decimal.Decimal
+    charged_cost: decimal.Decimal
     input_tokens: int
     output_tokens: int
     cached_tokens: int
