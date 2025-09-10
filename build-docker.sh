@@ -34,7 +34,7 @@ echo "Building Docker image: $IMAGE_NAME:$VERSION..."
 docker build \
   --build-arg ARG_CLERK_JWT_PUBLIC_KEY="$CLERK_JWT_PUBLIC_KEY" \
   --build-arg ARG_CLERK_API_KEY="$CLERK_API_KEY" \
-  --build-arg ARG_CLERK_API_URL="${CLERK_API_URL:-https://api.clerk.dev/v1}" \
+  --build-arg ARG_CLERK_API_URL="${CLERK_API_URL:-https://api.clerk.com/v1}" \
   --build-arg ARG_DEBUG_LOGGING="$DEBUG_LOGGING" \
   -t "$IMAGE_NAME:$VERSION" -t "$IMAGE_NAME:$LATEST_TAG" .
 
