@@ -534,7 +534,7 @@ async def test_async_cache_warming():
                 hashed_password="dummy_hash",
             )
             db.add(user)
-            db.commit()
+            await db.commit()
 
             # Create a test API key
             test_api_key = "test_key_123"
@@ -546,7 +546,7 @@ async def test_async_cache_warming():
                 encrypted_api_key=encrypted_key,
             )
             db.add(provider_key)
-            db.commit()
+            await db.commit()
 
             # Warm the cache
             await warm_cache_async(db)

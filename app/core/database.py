@@ -73,11 +73,11 @@ Base = declarative_base()
 
 # Async dependency
 async def get_async_db():
-    async with AsyncSessionLocal() as session:
-        try:
-            yield session
-        finally:
-            await session.close()
+    session = AsyncSessionLocal()
+    try:
+        yield session
+    finally:
+        await session.close()
 
 
 @asynccontextmanager
@@ -89,8 +89,6 @@ async def get_db_session():
         except Exception:
             await session.rollback()
             raise
-        finally:
-            await session.close()
 
 
 def get_connection_info():
