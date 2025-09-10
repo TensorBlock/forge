@@ -39,7 +39,7 @@ from app.services.provider_service import create_default_tensorblock_provider_fo
 logger = get_logger(name="dependencies")
 
 CLERK_API_KEY = os.getenv("CLERK_API_KEY")
-CLERK_API_URL = os.getenv("CLERK_API_URL", "https://api.clerk.dev/v1")
+CLERK_API_URL = os.getenv("CLERK_API_URL")
 
 # API key validation constants
 MIN_API_KEY_LENGTH = 5
@@ -381,8 +381,6 @@ async def get_current_user_from_clerk(
     db: AsyncSession = Depends(get_async_db), token_payload: dict = Depends(validate_clerk_jwt)
 ):
     """Get the current user from Clerk token, creating if needed"""
-    from urllib.parse import quote
-
     clerk_user_id = token_payload.get("sub")
 
     if not clerk_user_id:
@@ -402,28 +400,21 @@ async def get_current_user_from_clerk(
     # User doesn't exist yet, create one
     if not user:
         # Fetch user data from Clerk API
-        clerk_api_key = os.getenv("CLERK_API_KEY")
-        if not clerk_api_key:
+        # https://clerk.com/docs/reference/backend-api/tag/users/get/users/%7Buser_id%7D
+        if not CLERK_API_KEY:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Clerk API key not configured",
             )
 
         # Call Clerk API to get user info
-        clerk_api_url = os.getenv("CLERK_API_URL", "https://api.clerk.dev/v1")
-        url = f"{clerk_api_url}/users/{quote(clerk_user_id)}"
+        url = f"{CLERK_API_URL}/users/{clerk_user_id}"
 
         try:
-            response = requests.get(
-                url, headers={"Authorization": f"Bearer {clerk_api_key}"}
-            )
-
-            if not response.ok:
-                raise ValueError(
-                    f"Clerk API error: {response.status_code} - {response.text}"
-                )
-
-            user_data = response.json()
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers={"Authorization": f"Bearer {CLERK_API_KEY}"}) as response:
+                    response.raise_for_status()
+                    user_data = await response.json()
 
             # Extract email address
             email = None
@@ -431,31 +422,20 @@ async def get_current_user_from_clerk(
                 "email_addresses"
             ):
                 for email_obj in user_data.get("email_addresses", []):
-                    if email_obj.get("id") == user_data.get("primary_email_address_id"):
+                    if email_obj["id"] == user_data["primary_email_address_id"]:
                         email = email_obj.get("email_address")
                         break
-
-            # Fallback if no email found
-            if not email:
-                email = f"{clerk_user_id}@placeholder.com"
+            if email is None:
+                raise ValueError("No email found in Clerk user data")
 
             # Use email as username directly
             username = email
-
-            # Check if username exists and make unique if needed
-            result = await db.execute(select(User).filter(User.username == username))
-            existing_user = result.scalar_one_or_none()
-            if existing_user:
-                import random
-
-                username = f"{username.split('@')[0]}{random.randint(100, 999)}@{username.split('@')[1]}"
-
         except Exception as e:
-            if os.getenv("DEBUG") == "true":
-                logger.debug(f"Error fetching Clerk user data: {e}")
-            # Fallback to placeholder values
-            email = f"{clerk_user_id}@placeholder.com"
-            username = clerk_user_id
+            logger.exception(f"Error fetching Clerk user data: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to fetch user data from Clerk",
+            )
 
         # Check if user exists with this email
         result = await db.execute(select(User).filter(User.email == email))
@@ -479,8 +459,6 @@ async def get_current_user_from_clerk(
                 # If still no user, continue with creation attempt
 
         # Create new user
-        from app.core.security import get_password_hash
-
         try:
             user = User(
                 email=email,

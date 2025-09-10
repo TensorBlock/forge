@@ -263,7 +263,7 @@ async def debug_clerk_user(request: Request):
             return {"error": "Clerk API key not configured"}
 
         # Call Clerk API to get user info
-        clerk_api_url = os.getenv("CLERK_API_URL", "https://api.clerk.dev/v1")
+        clerk_api_url = os.getenv("CLERK_API_URL", "https://api.clerk.com/v1")
         url = f"{clerk_api_url}/users/{quote(clerk_user_id)}"
 
         response = requests.get(
