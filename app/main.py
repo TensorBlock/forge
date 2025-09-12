@@ -21,6 +21,7 @@ from app.api.routes import (
     wallet,
     webhooks,
     stripe,
+    admin,
 )
 from app.core.database import engine
 from app.core.logger import get_logger
@@ -173,6 +174,7 @@ def create_app() -> FastAPI:
     v1_router.include_router(webhooks.router, prefix="/webhooks", tags=["webhooks"])
     v1_router.include_router(statistic.router, prefix='/statistic', tags=["statistic"])
     v1_router.include_router(stripe.router, prefix='/stripe', tags=["stripe"])
+    v1_router.include_router(admin.router, prefix='/admin', tags=["admin"])
     # Claude Code compatible API endpoints
     v1_router.include_router(claude_code.router, tags=["Claude Code API"])
 

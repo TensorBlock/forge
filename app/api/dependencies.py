@@ -9,7 +9,6 @@ import time
 from datetime import datetime
 
 import aiohttp
-import requests
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import APIKeyHeader, OAuth2PasswordBearer
 from jose import JWTError, jwt
@@ -113,6 +112,7 @@ async def get_current_user(
     result = await db.execute(
         select(User)
         .options(selectinload(User.api_keys))  # Eager load Forge API keys
+        .options(selectinload(User.admin_users))  # Eager load admin users
         .filter(User.username == token_data.username)
     )
     user = result.scalar_one_or_none()
@@ -393,6 +393,7 @@ async def get_current_user_from_clerk(
     result = await db.execute(
         select(User)
         .options(selectinload(User.api_keys))  # Eager load Forge API keys
+        .options(selectinload(User.admin_users))  # Eager load admin users
         .filter(User.clerk_user_id == clerk_user_id)
     )
     user = result.scalar_one_or_none()
@@ -511,4 +512,13 @@ async def get_current_active_user_from_clerk(
     """Ensure the user from Clerk is active"""
     if not current_user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
+    return current_user
+
+
+async def get_current_active_admin_user_from_clerk(
+    current_user: User = Depends(get_current_active_user_from_clerk),
+):
+    """Ensure the user from Clerk is an admin"""
+    if not current_user.admin_users:
+        raise HTTPException(status_code=401, detail="User is not an admin")
     return current_user
