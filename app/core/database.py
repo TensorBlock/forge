@@ -77,9 +77,13 @@ async def get_async_db():
         try:
             yield session
         except Exception:
-            # Rollback on any exception
-            if not session.is_closed:
+            # Rollback on any exception, but handle potential session state issues
+            try:
                 await session.rollback()
+            except Exception:
+                # If rollback fails (e.g., session already closed), ignore it
+                # The context manager will handle session cleanup
+                pass
             raise
 
 
@@ -90,9 +94,13 @@ async def get_db_session():
         try:
             yield session
         except Exception:
-            # Rollback on any exception
-            if not session.is_closed:
+            # Rollback on any exception, but handle potential session state issues
+            try:
                 await session.rollback()
+            except Exception:
+                # If rollback fails (e.g., session already closed), ignore it
+                # The context manager will handle session cleanup
+                pass
             raise
 
 
