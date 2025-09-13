@@ -44,6 +44,80 @@ Forge is an open-source middleware service that simplifies AI model provider man
 - **Seamless Integration**: Compatible with OpenAI API standard for easy integration with existing tools
 - **Enhanced Security**: Keys are encrypted and never exposed to end applications
 
+## Developer Quickstart
+
+Make your first API request in minutes. Learn the basics of the Forge platform.
+
+### cURL Example
+
+```bash
+curl https://api.forge.tensorblock.co/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $FORGE_API_KEY" \
+  -d '{
+    "model": "OpenAI/gpt-4o",
+    "messages": [
+      {
+        "role": "developer",
+        "content": "You are a helpful assistant."
+      },
+      {
+        "role": "user",
+        "content": "Hello!"
+      }
+    ]
+  }'
+```
+
+### Python Example
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="https://api.forge.tensorblock.co/v1", 
+    api_key=FORGE_API_KEY,  
+)
+
+# models = client.models.list()
+
+completion = client.chat.completions.create(
+    model="OpenAI/gpt-4o",
+    messages=[
+        {"role": "developer", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Hello!"}
+    ]
+)
+
+print(completion.choices[0].message)
+```
+
+### JavaScript/Node.js Example
+
+```javascript
+const { OpenAI } = require("openai");
+
+const client = new OpenAI({
+    baseURL: "https://api.forge.tensorblock.co/v1",
+    apiKey: FORGE_API_KEY,  
+});
+
+// const models = await openai.models.list();
+
+async function main() {
+    const completion = await client.chat.completions.create({
+        model: "OpenAI/gpt-4o",
+        messages: [
+            { role: "developer", content: "You are a helpful assistant." },
+            { role: "user", content: "Hello!" }
+        ]
+    });
+    console.log(completion.choices[0].message);
+}
+
+main();
+```
+
 ## Key Features
 
 - **Unified API Key**: Store multiple provider API keys and access all with a single Forge API key
