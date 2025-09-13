@@ -55,7 +55,7 @@ async def setup_mock_provider(username: str, force: bool = False):
             # If force is set and provider exists, delete the existing one
             if existing_provider and force:
                 db.delete(existing_provider)
-                db.commit()
+                await db.commit()
                 print(f"🗑️ Deleted existing mock provider for user '{username}'.")
 
             # Create a mock API key - it doesn't need to be secure as it's not used
@@ -83,7 +83,7 @@ async def setup_mock_provider(username: str, force: bool = False):
             )
 
             db.add(provider_key)
-            db.commit()
+            await db.commit()
 
             # Invalidate provider key cache for this user to force refresh
             provider_service_cache.delete(f"provider_keys:{user.id}")
