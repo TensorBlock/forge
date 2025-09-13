@@ -76,8 +76,11 @@ async def get_async_db():
     async with AsyncSessionLocal() as session:
         try:
             yield session
-        finally:
-            await session.close()
+        except Exception:
+            # Rollback on any exception
+            if not session.is_closed:
+                await session.rollback()
+            raise
 
 
 @asynccontextmanager
@@ -87,10 +90,10 @@ async def get_db_session():
         try:
             yield session
         except Exception:
-            await session.rollback()
+            # Rollback on any exception
+            if not session.is_closed:
+                await session.rollback()
             raise
-        finally:
-            await session.close()
 
 
 def get_connection_info():
