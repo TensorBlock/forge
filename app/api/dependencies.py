@@ -13,7 +13,6 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import APIKeyHeader, OAuth2PasswordBearer
 from jose import JWTError, jwt
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session, joinedload, selectinload
 
@@ -33,7 +32,6 @@ from app.core.security import (
 )
 from app.models.forge_api_key import ForgeApiKey
 from app.models.user import User
-from app.services.provider_service import create_default_tensorblock_provider_for_user
 
 logger = get_logger(name="dependencies")
 
@@ -402,111 +400,11 @@ async def get_current_user_from_clerk(
         .filter(User.clerk_user_id == clerk_user_id)
     )
     user = result.scalar_one_or_none()
-
-    # User doesn't exist yet, create one
     if not user:
-        # Fetch user data from Clerk API
-        # https://clerk.com/docs/reference/backend-api/tag/users/get/users/%7Buser_id%7D
-        if not CLERK_API_KEY:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Clerk API key not configured",
-            )
-
-        # Call Clerk API to get user info
-        url = f"{CLERK_API_URL}/users/{clerk_user_id}"
-
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers={"Authorization": f"Bearer {CLERK_API_KEY}"}) as response:
-                    response.raise_for_status()
-                    user_data = await response.json()
-
-            # Extract email address
-            email = None
-            if user_data.get("primary_email_address_id") and user_data.get(
-                "email_addresses"
-            ):
-                for email_obj in user_data.get("email_addresses", []):
-                    if email_obj["id"] == user_data["primary_email_address_id"]:
-                        email = email_obj.get("email_address")
-                        break
-            if email is None:
-                raise ValueError("No email found in Clerk user data")
-
-            # Use email as username directly
-            username = email
-        except Exception as e:
-            logger.exception(f"Error fetching Clerk user data: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to fetch user data from Clerk",
-            )
-
-        # Check if user exists with this email
-        result = await db.execute(select(User).filter(User.email == email))
-        existing_user = result.scalar_one_or_none()
-        if existing_user:
-            # Link existing user to Clerk ID
-            try:
-                existing_user.clerk_user_id = clerk_user_id
-                await db.commit()
-                return existing_user
-            except IntegrityError:
-                # Another request might have already linked this user or created a new one
-                await db.rollback()
-                # Retry the query to get the user
-                result = await db.execute(
-                    select(User).filter(User.clerk_user_id == clerk_user_id)
-                )
-                user = result.scalar_one_or_none()
-                if user:
-                    return user
-                # If still no user, continue with creation attempt
-
-        # Create new user
-        try:
-            user = User(
-                email=email,
-                username=username,
-                clerk_user_id=clerk_user_id,
-                is_active=True,
-                hashed_password="",  # Clerk handles authentication
-            )
-            db.add(user)
-            await db.commit()
-            await db.refresh(user)
-
-            # Create default TensorBlock provider for the new user
-            try:
-                await create_default_tensorblock_provider_for_user(user.id, db)
-            except Exception as e:
-                # Log error but don't fail user creation
-                logger.warning(
-                    f"Failed to create default TensorBlock provider for user {user.id}: {e}"
-                )
-
-            return user
-        except IntegrityError as e:
-            # Handle race condition: another request might have created the user
-            await db.rollback()
-            if "users_clerk_user_id_key" in str(e) or "clerk_user_id" in str(e):
-                # Retry the query to get the user that was created by another request
-                result = await db.execute(
-                    select(User).filter(User.clerk_user_id == clerk_user_id)
-                )
-                user = result.scalar_one_or_none()
-                if user:
-                    return user
-                else:
-                    # This shouldn't happen, but handle it gracefully
-                    raise HTTPException(
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail="Failed to create or retrieve user due to database constraint",
-                    )
-            else:
-                # Re-raise other integrity errors
-                raise
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found",
+        )
 
     return user
 

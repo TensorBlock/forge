@@ -3,6 +3,7 @@ import os
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 import stripe
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy import update, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from svix import Webhook, WebhookVerificationError
@@ -14,6 +15,7 @@ from app.models.stripe import StripePayment
 from app.models.user import User
 from app.models.admin_users import AdminUsers
 from app.services.wallet_service import WalletService
+from app.services.provider_service import create_default_tensorblock_provider_for_user
 
 logger = get_logger(name="webhooks")
 
@@ -27,12 +29,17 @@ CLERK_TENSORBLOCK_ORGANIZATION_ID = os.getenv("CLERK_TENSORBLOCK_ORGANIZATION_ID
 @router.post("/clerk")
 async def clerk_webhook_handler(request: Request, db: AsyncSession = Depends(get_async_db)):
     """
-    Handle Clerk webhooks for user events.
+    Handle Clerk webhooks for user/organization membership events.
 
     Key events to handle:
+    # Organization membership events
     - organizationMembership.created: Add user to admin users table
     - organizationMembership.updated: Update user in admin users table
     - organizationMembership.deleted: Remove user from admin users table
+
+    # User events
+    - user.created: Upsert user record
+    - user.updated: Upsert user record
     """
     # Get the request body
     payload = await request.body()
@@ -71,10 +78,12 @@ async def clerk_webhook_handler(request: Request, db: AsyncSession = Depends(get
         event_type = event_data.get("type")
         logger.info(f"Received Clerk webhook: {event_type}")
 
-        if event_type == "organizationMembership.created" or event_type == "organizationMembership.updated":
+        if event_type in ["organizationMembership.created", "organizationMembership.updated"]:
             await handle_organization_membership_created(event_data, db)
         elif event_type == "organizationMembership.deleted":
             await handle_organization_membership_deleted(event_data, db)
+        elif event_type in ["user.created", "user.updated"]:
+            await handle_clerk_user_created(event_data, db)
         else:
             logger.warning(f"Unhandled Clerk event type: {event_type}")
     except json.JSONDecodeError:
@@ -120,6 +129,55 @@ async def handle_organization_membership_deleted(event_data: dict, db: AsyncSess
     # delete from admin users table, if present
     await db.execute(delete(AdminUsers).where(AdminUsers.user_id.in_(select(User.id).where(User.clerk_user_id == clerk_user_id))))
     await db.commit()
+
+
+async def handle_clerk_user_created(event_data: dict, db: AsyncSession):
+    data = event_data['data']
+    clerk_user_id = data['id']
+
+    # extract the primary email address
+    if not data.get('primary_email_address_id') or not data.get('email_addresses'):
+        logger.error(f"No primary email address or email addresses found for user {clerk_user_id}")
+        raise HTTPException(status_code=400, detail="No primary email address or email addresses found for user")
+    
+    email = None
+    primary_email_address_id = data['primary_email_address_id']
+    for email_address in data['email_addresses']:
+        if email_address['id'] == primary_email_address_id:
+            email = email_address['email_address']
+            break
+    
+    if not email:
+        logger.error(f"No email address found for user {clerk_user_id}")
+        raise HTTPException(status_code=400, detail="No email address found for user")
+    
+    # upsert user record
+    try:
+        result = await db.execute(
+            insert(User).values(
+                email=email,
+                username=email,  # Use email as username
+                clerk_user_id=clerk_user_id,
+                is_active=True,
+                hashed_password="",  # Clerk handles authentication
+            ).on_conflict_do_update(
+                index_elements=[User.clerk_user_id],
+                set_=dict(
+                    email=email,
+                    username=email,
+                    is_active=True,
+                    hashed_password="",  # Clerk handles authentication
+                )
+            ).returning(User.id)
+        )
+        user_id = result.scalar_one()
+        await create_default_tensorblock_provider_for_user(user_id, db)
+        await db.commit()
+    except IntegrityError:
+        logger.exception("Error upserting user record for clerk user")
+        raise HTTPException(status_code=400, detail="Error upserting user record for clerk user")
+    
+    logger.info(f"Upserted user record for clerk user {clerk_user_id}/{email}")
 
 
 @router.post("/stripe")
