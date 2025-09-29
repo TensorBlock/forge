@@ -255,7 +255,12 @@ async def get_user_by_api_key(
 
     # Update last used timestamp for the API key
     api_key_record.last_used_at = datetime.utcnow()
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception:
+        # If commit fails, rollback and continue
+        await db.rollback()
+        # Don't fail the request just because timestamp update failed
 
     # Cache the user data for future requests
     await cache_user_async(api_key, user)
