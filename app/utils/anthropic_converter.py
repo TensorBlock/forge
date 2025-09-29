@@ -23,7 +23,6 @@ from app.api.schemas.anthropic import (
     ToolChoice,
     Usage,
 )
-from app.api.schemas.openai import ChatMessage, OpenAIContentModel
 from app.core.logger import get_logger
 
 logger = get_logger(name="anthropic_converter")

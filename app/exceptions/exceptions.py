@@ -76,7 +76,7 @@ class InvalidCompletionRequestException(BaseInvalidRequestException):
     def __init__(self, provider_name: str, error: Exception):
         self.provider_name = provider_name
         self.error = error
-        super().__init__(f"Provider {provider_name} completion request is invalid: {error}")
+        super().__init__(self.provider_name, self.error)
 
 class InvalidEmbeddingsRequestException(BaseInvalidRequestException):
     """Exception raised when a embeddings request is invalid."""
@@ -84,7 +84,7 @@ class InvalidEmbeddingsRequestException(BaseInvalidRequestException):
     def __init__(self, provider_name: str, error: Exception):
         self.provider_name = provider_name
         self.error = error
-        super().__init__(f"Provider {provider_name} embeddings request is invalid: {error}")
+        super().__init__(self.provider_name, self.error)
 
 class BaseInvalidForgeKeyException(BaseForgeException):
     """Exception raised when a Forge key is invalid."""

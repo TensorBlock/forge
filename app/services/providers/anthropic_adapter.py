@@ -59,6 +59,48 @@ class AnthropicAdapter(ProviderAdapter):
         }
     
     @staticmethod
+    async def convert_openai_file_content_to_anthropic(
+        msg: dict[str, Any], allow_url_download: bool = False
+    ) -> dict[str, Any]:
+        """Convert OpenAI file content to Anthropic file content"""
+        # Only support pdf & plain text files for now
+        file = msg["file"]
+        file_data = file.get("file_data")
+        if not file_data:
+            raise InvalidCompletionRequestException(
+                provider_name="anthropic", error=ValueError("file_data is required for file content in anthropic")
+            )
+        
+        if file_data.startswith("data:"):
+            # Extract media type and base64 data, assume it's a pdf file and return it as a base64 document
+            parts = file_data.split(",", 1)
+            media_type = parts[0].split(":")[1].split(";")[0]  # e.g., "application/pdf"
+            base64_data = parts[1]  # The actual base64 string without prefix
+            if not media_type == "application/pdf":
+                raise InvalidCompletionRequestException(
+                    provider_name="anthropic", error=ValueError("Only application/pdf files are supported for base64 file content in anthropic")
+                )
+            return {
+                "type": "document",
+                "source": {
+                    "data": base64_data,
+                    "media_type": media_type,
+                    "type": "base64",
+                }
+            }
+        else:
+            # Treat it as a plain text file
+            return {
+                "type": "document",
+                "source": {
+                    "data": file_data,
+                    "media_type": "text/plain",
+                    "type": "text",
+                }
+            }
+
+    
+    @staticmethod
     async def convert_openai_image_content_to_anthropic(
         msg: dict[str, Any], allow_url_download: bool = False
     ) -> dict[str, Any]:
@@ -153,6 +195,10 @@ class AnthropicAdapter(ProviderAdapter):
             elif _type == "image_url":
                 result.append(
                     await AnthropicAdapter.convert_openai_image_content_to_anthropic(msg, allow_url_download=allow_url_download)
+                )
+            elif _type == "file":
+                result.append(
+                    await AnthropicAdapter.convert_openai_file_content_to_anthropic(msg, allow_url_download=allow_url_download)
                 )
             else:
                 error_message = f"{_type} is not supported"

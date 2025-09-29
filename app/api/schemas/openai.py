@@ -17,15 +17,21 @@ class OpenAIAudioModel(BaseModel):
     format: str
 
 
+class OpenAIContentFileModel(BaseModel):
+    filename: str | None = None
+    file_data: str | None = None
+    file_id: str | None = None
+
 class OpenAIContentModel(BaseModel):
-    type: str  # One of: "text", "image_url", "input_audio"
+    type: str  # One of: "text", "image_url", "input_audio", "file"
     text: str | None = None
     image_url: OpenAIContentImageUrlModel | None = None
     input_audio: OpenAIAudioModel | None = None
+    file: OpenAIContentFileModel | None = None
 
     def __init__(self, **data: Any):
         super().__init__(**data)
-        if self.type not in ["text", "image_url", "input_audio"]:
+        if self.type not in ["text", "image_url", "input_audio", "file"]:
             error_message = f"Invalid type: {self.type}. Must be one of: text, image_url, input_audio"
             logger.error(error_message)
             raise InvalidCompletionRequestException(
@@ -50,6 +56,13 @@ class OpenAIContentModel(BaseModel):
             )
         if self.type == "input_audio" and self.input_audio is None:
             error_message = "input_audio field must be set when type is 'input_audio'"
+            logger.error(error_message)
+            raise InvalidCompletionRequestException(
+                provider_name="openai",
+                error=ValueError(error_message)
+            )
+        if self.type == "file" and self.file is None:
+            error_message = "file field must be set when type is 'file'"
             logger.error(error_message)
             raise InvalidCompletionRequestException(
                 provider_name="openai",
