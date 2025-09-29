@@ -35,3 +35,4 @@ class User(Base):
     wallet = relationship("Wallet", back_populates="user", uselist=False)
     # Optional: Add relationship to ApiRequestLog if needed
     # api_logs = relationship("ApiRequestLog")
+    admin_users = relationship("AdminUsers", back_populates="user", uselist=False)

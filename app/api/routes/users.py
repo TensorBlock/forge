@@ -86,6 +86,9 @@ async def read_user_me(
     else:
         user_data["forge_api_keys"] = []
 
+    if current_user.admin_users:
+        user_data["is_admin"] = True
+
     return MaskedUser(**user_data)
 
 
@@ -103,6 +106,9 @@ async def read_user_me_clerk(
         ]
     else:
         user_data["forge_api_keys"] = []
+
+    if current_user.admin_users:
+        user_data["is_admin"] = True
 
     return MaskedUser(**user_data)
 
