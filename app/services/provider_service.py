@@ -620,6 +620,12 @@ class ProviderService:
                 payload,
                 api_key,
             )
+        elif "responses" == endpoint:
+            result = await adapter.process_responses(
+                endpoint,
+                payload,
+                api_key,
+            )
         elif "images/generations" in endpoint:
             # TODO: we only support openai for now
             if provider_name != "openai":

@@ -36,6 +36,27 @@ class ProviderAdapter(ABC):
     ) -> Any:
         """Process a completion request"""
         pass
+    
+    async def process_responses(
+        self,
+        endpoint: str,
+        payload: dict[str, Any],
+        api_key: str,
+        base_url: str | None = None,
+    ) -> Any:
+        """Process a response request"""
+        # TODO: currently it's openai only
+        raise NotImplementedError("Process response is not implemented")
+    
+    async def process_conversations(
+        self,
+        endpoint: str,
+        payload: dict[str, Any],
+        api_key: str,
+        base_url: str | None = None,
+    ) -> Any:
+        """Process a conversations request"""
+        raise NotImplementedError("Process conversations is not implemented")
 
     @abstractmethod
     async def process_embeddings(

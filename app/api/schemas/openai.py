@@ -252,3 +252,202 @@ class EmbeddingsRequest(BaseModel):
     encoding_format: str | None = 'float'
     # inpput_type is for cohere embeddings only
     input_type: str | None = 'search_document'
+
+
+# ---------------------------------------------------------------------------
+# OpenAI Responses Request
+# https://platform.openai.com/docs/api-reference/responses/create
+# ---------------------------------------------------------------------------
+class ResponsesInputTextItem(BaseModel):
+    text: str
+    type: str  #  always input_text
+
+class ResponsesInputImageItem(BaseModel):
+    detail: str | None = 'auto'
+    type: str  #  always input_image
+    file_id: str | None = None
+    image_url: str | None = None
+
+class ResponsesInputFileItem(BaseModel):
+    type: str  #  always input_file
+    file_data: str | None = None
+    file_id: str | None = None
+    file_url: str | None = None
+    filename: str | None = None
+
+class ResponsesInputAudioItem(BaseModel):
+    input_audio: object
+    type: str  #  always input_audio
+
+class ResponsesInputMessageItem(BaseModel):
+    role: str
+    type: str | None = None
+    content: str | list[ResponsesInputTextItem | ResponsesInputImageItem | ResponsesInputFileItem | ResponsesInputAudioItem]
+
+
+class ResponsesItemInputMessage(BaseModel):
+    role: str
+    content: list[ResponsesInputTextItem | ResponsesInputImageItem | ResponsesInputFileItem | ResponsesInputAudioItem]
+    status: str | None = None
+    type: str | None = None
+
+class ResponsesItemOutputMessage(BaseModel):
+    content: list[object]
+    id: str
+    role: str
+    status: str
+    type: str
+
+class ResponsesItemFileSearchToolCall(BaseModel):
+    id: str
+    query: str
+    status: str
+    type: str
+    results: list[object]
+
+class ResponsesItemComputerToolCall(BaseModel):
+    action: object
+    call_id: str
+    id: str
+    pending_safety_checks: list[object]
+    status: str
+    type: str
+
+class ResponsesItemComputerToolCallOutput(BaseModel):
+    call_id: str
+    output: object
+    type: str
+    acknowledged_safety_checks: list[object] | None = None
+    id: str | None = None
+    status: str | None = None
+
+class ResponsesItemWebSearchToolCall(BaseModel):
+    action: object
+    id: str
+    status: str
+    type: str
+
+class ResponsesItemFunctionToolCall(BaseModel):
+    arguments: str
+    call_id: str
+    name: str
+    type: str
+    id: str | None = None
+    status: str | None = None
+
+class ResponsesItemFunctionToolCallOutput(BaseModel):
+    call_id: str
+    output: str | list[object]
+    type: str
+    id: str | None = None
+    status: str | None = None
+
+class ResponsesItemReasoning(BaseModel):
+    id: str
+    summary: list[object]
+    type: str
+    content: list[object] | None = None
+    encrypted_content: str | None = None
+    status: str | None = None
+
+class ResponsesItemImageGenerationCall(BaseModel):
+    id: str
+    result: str
+    status: str
+    type: str
+
+class ResponsesItemCodeInterpreterToolCall(BaseModel):
+    code: str
+    container_id: str
+    id: str
+    outputs: list[object]
+    status: str
+    type: str
+
+class ResponsesItemLocalShellCall(BaseModel):
+    action: object
+    call_id: str
+    id: str
+    status: str
+    type: str
+
+class ResponsesItemLocalShellCallOutput(BaseModel):
+    id: str
+    output: str
+    type: str
+    status: str | None = None
+
+class ResponsesItemMCPListTools(BaseModel):
+    id: str
+    server_label: str
+    tools: list[object]
+    type: str
+    error: str | None = None
+
+class ResponsesItemMCPApprovalRequest(BaseModel):
+    arguments: str
+    id: str
+    name: str
+    server_label: str
+    type: str
+
+class ResponsesItemMCPApprovalResponse(BaseModel):
+    approval_request_id: str
+    approve: bool
+    type: str
+    id: str | None = None
+    reason: str | None = None
+
+class ResponsesItemMCPToolCall(BaseModel):
+    arguments: str
+    id: str
+    name: str
+    server_label: str
+    type: str
+    error: str | None = None
+    output: str | None = None
+
+class ResponsesItemCustomToolCallOutput(BaseModel):
+    call_id: str
+    output: str | list[object]
+    type: str
+    id: str | None = None
+
+class ResponsesItemCustomToolCall(BaseModel):
+    call_id: str
+    input: str
+    name: str
+    type: str
+    id: str | None = None
+
+class ResponsesItemReference(BaseModel):
+    id: str
+    type: str
+
+class ResponsesRequest(BaseModel):
+    background: bool | None = False
+    conversation: str | object | None = None
+    include: list[Any] | None = None
+    input: str | list[ResponsesInputMessageItem | ResponsesItemReference | ResponsesItemInputMessage | ResponsesItemFileSearchToolCall | ResponsesItemComputerToolCall | ResponsesItemWebSearchToolCall | ResponsesItemFunctionToolCall | ResponsesItemReasoning | ResponsesItemImageGenerationCall | ResponsesItemCodeInterpreterToolCall | ResponsesItemLocalShellCall | ResponsesItemMCPListTools | ResponsesItemMCPApprovalRequest | ResponsesItemMCPApprovalResponse | ResponsesItemMCPToolCall | ResponsesItemCustomToolCallOutput | ResponsesItemCustomToolCall] | None = None
+    instructions: str | None = None
+    max_output_tokens: int | None = None
+    max_tool_calls: int | None = None
+    metadata: dict[Any, Any] | None = None
+    model: str | None = None
+    parallel_tool_calls: bool | None = True
+    previous_response_id: str | None = None
+    prompt: object | None = None
+    prompt_cache_key: str | None = None
+    reasoning: object | None = None
+    safety_identifier: str | None = None
+    service_tier: str | None = 'auto'
+    store: bool | None = True
+    stream: bool | None = False
+    stream_options: object | None = None
+    temperature: float | None = 1.0
+    text: object | None = None
+    tool_choice: str | object | None = None
+    tools: list[Any] | None = None
+    top_logprobs: int | None = None
+    top_p: float | None = 1.0
+    truncation: str | None = 'disabled'
