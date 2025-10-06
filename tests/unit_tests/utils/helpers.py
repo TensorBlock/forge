@@ -93,6 +93,7 @@ class ClientSessionMock:
 
 
 OPENAAI_STANDARD_CHAT_COMPLETION_RESPONSE = "Hello! I'm just a program, so I don't have feelings, but I'm here and ready to help you. How can I assist you today?"
+OPENAI_STANDARD_RESPONSES_RESPONSE = "Hello! I'm doing well, thank you. How about you?"
 ANTHROPIC_STANDARD_CHAT_COMPLETION_RESPONSE = "Hello! I'm doing well, thank you for asking. I'm here and ready to help with whatever you'd like to discuss or work on. How are you doing today?"
 GOOGLE_STANDARD_CHAT_COMPLETION_RESPONSE = (
     "I am doing well, thank you for asking. How are you today?\n"
@@ -182,3 +183,22 @@ def validate_chat_completion_streaming_response(
             expected_usage["prompt_tokens_details"] = usage["prompt_tokens_details"]
         if "completion_tokens_details" in expected_usage:
             expected_usage["completion_tokens_details"] = usage["completion_tokens_details"]
+
+def validate_responses_response(
+    response: dict,
+    expected_model: str = None,
+    expected_message: str = None,
+    expected_usage: dict = None,
+):
+    assert "model" in response, "model is required"
+    assert "output" in response, "output is required"
+    assert "usage" in response, "usage is required"
+
+    if expected_model:
+        assert response["model"] == expected_model
+    if expected_message:
+        assert response["output"][0]["content"][0]["text"] == expected_message
+    if expected_usage:
+        usage = response["usage"]
+        assert usage["input_tokens"] == expected_usage["input_tokens"]
+        assert usage["output_tokens"] == expected_usage["output_tokens"]
