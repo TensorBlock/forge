@@ -65,7 +65,6 @@ class UsageTrackerService:
             )
             usage_tracker = result.scalar_one_or_none()
             now = datetime.now(UTC)
-            logger.info(f"provider_key: {usage_tracker.provider_key.provider_name}")
             price_info = await PricingService.calculate_usage_cost(
                 db,
                 usage_tracker.provider_key.provider_name.lower(),
