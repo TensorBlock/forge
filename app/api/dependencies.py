@@ -9,12 +9,10 @@ import time
 from datetime import datetime
 
 import aiohttp
-import requests
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import APIKeyHeader, OAuth2PasswordBearer
 from jose import JWTError, jwt
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session, joinedload, selectinload
 
@@ -34,7 +32,6 @@ from app.core.security import (
 )
 from app.models.forge_api_key import ForgeApiKey
 from app.models.user import User
-from app.services.provider_service import create_default_tensorblock_provider_for_user
 
 logger = get_logger(name="dependencies")
 
@@ -113,6 +110,7 @@ async def get_current_user(
     result = await db.execute(
         select(User)
         .options(selectinload(User.api_keys))  # Eager load Forge API keys
+        .options(selectinload(User.admin_users))  # Eager load admin users
         .filter(User.username == token_data.username)
     )
     user = result.scalar_one_or_none()
@@ -255,7 +253,12 @@ async def get_user_by_api_key(
 
     # Update last used timestamp for the API key
     api_key_record.last_used_at = datetime.utcnow()
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception:
+        # If commit fails, rollback and continue
+        await db.rollback()
+        # Don't fail the request just because timestamp update failed
 
     # Cache the user data for future requests
     await cache_user_async(api_key, user)
@@ -393,11 +396,10 @@ async def get_current_user_from_clerk(
     result = await db.execute(
         select(User)
         .options(selectinload(User.api_keys))  # Eager load Forge API keys
+        .options(selectinload(User.admin_users))  # Eager load admin users
         .filter(User.clerk_user_id == clerk_user_id)
     )
     user = result.scalar_one_or_none()
-
-    # User doesn't exist yet, create one
     if not user:
         # Fetch user data from Clerk API
         # https://clerk.com/docs/reference/backend-api/tag/users/get/users/%7Buser_id%7D
@@ -511,4 +513,13 @@ async def get_current_active_user_from_clerk(
     """Ensure the user from Clerk is active"""
     if not current_user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
+    return current_user
+
+
+async def get_current_active_admin_user_from_clerk(
+    current_user: User = Depends(get_current_active_user_from_clerk),
+):
+    """Ensure the user from Clerk is an admin"""
+    if not current_user.admin_users:
+        raise HTTPException(status_code=401, detail="User is not an admin")
     return current_user

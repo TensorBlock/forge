@@ -36,6 +36,7 @@ class User(UserInDB):
 
 
 class MaskedUser(UserInDB):
+    is_admin: bool = False
     forge_api_keys: list[str] | None = Field(
         description="List of all API keys with all but last 4 digits masked",
         default=None,

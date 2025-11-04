@@ -76,8 +76,15 @@ async def get_async_db():
     async with AsyncSessionLocal() as session:
         try:
             yield session
-        finally:
-            await session.close()
+        except Exception:
+            # Rollback on any exception, but handle potential session state issues
+            try:
+                await session.rollback()
+            except Exception:
+                # If rollback fails (e.g., session already closed), ignore it
+                # The context manager will handle session cleanup
+                pass
+            raise
 
 
 @asynccontextmanager
@@ -87,10 +94,14 @@ async def get_db_session():
         try:
             yield session
         except Exception:
-            await session.rollback()
+            # Rollback on any exception, but handle potential session state issues
+            try:
+                await session.rollback()
+            except Exception:
+                # If rollback fails (e.g., session already closed), ignore it
+                # The context manager will handle session cleanup
+                pass
             raise
-        finally:
-            await session.close()
 
 
 def get_connection_info():

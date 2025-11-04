@@ -15,6 +15,7 @@ from app.api.schemas.openai import (
     EmbeddingsRequest,
     ImageEditsRequest,
     ImageGenerationRequest,
+    ResponsesRequest,
 )
 from app.core.async_cache import forge_scope_cache_async, get_forge_scope_cache_async
 from app.core.database import get_async_db
@@ -279,6 +280,54 @@ async def create_embeddings(
         raise HTTPException(
             status_code=404, detail=f"Error processing request: {str(err)}"
         ) from err
+    except Exception as err:
+        raise HTTPException(
+            status_code=500, detail=f"Error processing request: {str(err)}"
+        ) from err
+
+@router.post("/responses")
+async def create_responses(
+    request: Request,
+    responses_request: ResponsesRequest,
+    user_details: dict[str, Any] = Depends(get_user_details_by_api_key),
+    db: AsyncSession = Depends(get_async_db),
+) -> Any:
+    """
+    Create a response (OpenAI-compatible endpoint).
+    """
+    try:
+        user = user_details["user"]
+        api_key_id = user_details["api_key_id"]
+        provider_service = await ProviderService.async_get_instance(user, db, api_key_id=api_key_id)
+        allowed_provider_names = await _get_allowed_provider_names(request, db)
+
+        response = await provider_service.process_request(
+            "responses",
+            responses_request.model_dump(mode="json", exclude_unset=True),
+            allowed_provider_names=allowed_provider_names,
+        )
+
+        # Check if it's a streaming response
+        if inspect.isasyncgen(response):
+            headers = {
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",  # Prevent Nginx buffering
+            }
+
+            return StreamingResponse(
+                response, media_type="text/event-stream", headers=headers
+            )
+
+        # Otherwise, return the JSON response directly
+        return response
+    except NotImplementedError as err:
+        raise HTTPException(
+            status_code=404, detail=f"Error processing request: {str(err)}"
+        ) from err
+    except ValueError as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
     except Exception as err:
         raise HTTPException(
             status_code=500, detail=f"Error processing request: {str(err)}"

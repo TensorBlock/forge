@@ -620,6 +620,12 @@ class ProviderService:
                 payload,
                 api_key,
             )
+        elif "responses" == endpoint:
+            result = await adapter.process_responses(
+                endpoint,
+                payload,
+                api_key,
+            )
         elif "images/generations" in endpoint:
             # TODO: we only support openai for now
             if provider_name != "openai":
@@ -859,15 +865,7 @@ async def create_default_tensorblock_provider_for_user(
         )
 
         db.add(provider_key)
-        await db.commit()
-
         logger.info(f"Created default TensorBlock provider for user {user_id}")
-
-    except Exception as e:
-        await db.rollback()
-        logger.error(
-            "Error creating default TensorBlock provider for user {}: {}",
-            user_id,
-            e,
-        )
-        # Don't raise the exception - this is optional functionality
+    except Exception:
+        logger.exception(f"Error creating default TensorBlock provider for user {user_id}")
+        raise

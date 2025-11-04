@@ -352,3 +352,68 @@ class OpenAIAdapter(ProviderAdapter):
             "usage": total_usage,
         }
         return final_response
+    
+    async def process_responses(
+        self,
+        endpoint: str,
+        payload: dict[str, Any],
+        api_key: str,
+        base_url: str | None = None,
+    ) -> Any:
+        """Process a response request using OpenAI API"""
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+
+        url = f"{base_url or self._base_url}/{endpoint}"
+
+        # Check if streaming is requested
+        streaming = payload.get("stream", False)
+        if streaming:
+            # For streaming, return a streaming generator
+            async def stream_response() -> AsyncGenerator[bytes, None]:
+                async with (
+                    aiohttp.ClientSession() as session,
+                    session.post(
+                        url, headers=headers, json=payload
+                    ) as response,
+                ):
+                    if response.status != HTTPStatus.OK:
+                        error_text = await response.text()
+                        logger.error(
+                            f"Responses Streaming API error for {self.provider_name}: {error_text}"
+                        )
+                        raise ProviderAPIException(
+                            provider_name=self.provider_name,
+                            error_code=response.status,
+                            error_message=error_text,
+                        )
+
+                    # Stream the response back
+                    async for chunk in response.content:
+                        if chunk:
+                            yield chunk
+
+            # Return the streaming generator
+            return stream_response()
+        else:
+            # For non-streaming, use the regular approach
+            async with (
+                aiohttp.ClientSession() as session,
+                session.post(
+                    url, headers=headers, json=payload
+                ) as response,
+            ):
+                if response.status != HTTPStatus.OK:
+                    error_text = await response.text()
+                    logger.error(
+                        f"Responses API error for {self.provider_name}: {error_text}"
+                    )
+                    raise ProviderAPIException(
+                        provider_name=self.provider_name,
+                        error_code=response.status,
+                        error_message=error_text,
+                    )
+
+                return await response.json()

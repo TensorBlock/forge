@@ -1,19 +1,21 @@
 import json
 import os
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 import stripe
-from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy import update, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from svix import Webhook, WebhookVerificationError
+from sqlalchemy.dialects.postgresql import insert
 
 from app.core.database import get_async_db
 from app.core.logger import get_logger
-from app.models.user import User
 from app.models.stripe import StripePayment
-from app.services.provider_service import create_default_tensorblock_provider_for_user
+from app.models.user import User
+from app.models.admin_users import AdminUsers
 from app.services.wallet_service import WalletService
+from app.services.provider_service import create_default_tensorblock_provider_for_user
 
 logger = get_logger(name="webhooks")
 
@@ -22,17 +24,22 @@ router = APIRouter()
 # Webhook signing secrets for verifying webhook authenticity
 CLERK_WEBHOOK_SECRET = os.getenv("CLERK_WEBHOOK_SECRET", "")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
-
+CLERK_TENSORBLOCK_ORGANIZATION_ID = os.getenv("CLERK_TENSORBLOCK_ORGANIZATION_ID", "")
 
 @router.post("/clerk")
 async def clerk_webhook_handler(request: Request, db: AsyncSession = Depends(get_async_db)):
     """
-    Handle Clerk webhooks for user events.
+    Handle Clerk webhooks for user/organization membership events.
 
     Key events to handle:
-    - user.created: Create a new user in our database
-    - user.updated: Update user details
-    - user.deleted: Optionally deactivate the user
+    # Organization membership events
+    - organizationMembership.created: Add user to admin users table
+    - organizationMembership.updated: Update user in admin users table
+    - organizationMembership.deleted: Remove user from admin users table
+
+    # User events
+    - user.created: Upsert user record
+    - user.updated: Upsert user record
     """
     # Get the request body
     payload = await request.body()
@@ -56,13 +63,9 @@ async def clerk_webhook_handler(request: Request, db: AsyncSession = Depends(get
 
     # Verify webhook signature with Svix
     try:
-        if not CLERK_WEBHOOK_SECRET:
-            # For development only - should be removed in production
-            logger.warning("CLERK_WEBHOOK_SECRET is not set")
-        else:
-            wh = Webhook(CLERK_WEBHOOK_SECRET)
-            # This will throw an error if verification fails
-            wh.verify(payload.decode(), svix_headers)
+        wh = Webhook(CLERK_WEBHOOK_SECRET)
+        # This will throw an error if verification fails
+        wh.verify(payload.decode(), svix_headers)
     except WebhookVerificationError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -73,173 +76,108 @@ async def clerk_webhook_handler(request: Request, db: AsyncSession = Depends(get
     try:
         event_data = json.loads(payload)
         event_type = event_data.get("type")
+        logger.info(f"Received Clerk webhook: {event_type}")
 
-        # Extract user data
-        user_data = event_data.get("data", {})
-        clerk_user_id = user_data.get("id")
-
-        # Extract email from email_addresses array
-        email_addresses = user_data.get("email_addresses", [])
-        primary_email_id = user_data.get("primary_email_address_id")
-
-        email = None
-        # Find primary email
-        for email_obj in email_addresses:
-            if email_obj.get("id") == primary_email_id:
-                email = email_obj.get("email_address")
-                break
-
-        # If no primary email, use the first one
-        if not email and email_addresses:
-            email = email_addresses[0].get("email_address", "")
-
-        # Get username or fallback to email prefix
-        username = user_data.get("username")
-        if not username and email:
-            username = email.split("@")[0]
-
-        if not clerk_user_id or not email:
-            return {"status": "error", "message": "Missing required user data"}
-
-        # Handle different event types
-        if event_type == "user.created":
-            await handle_user_created(event_data, db)
-
-        elif event_type == "user.updated":
-            await handle_user_updated(event_data, db)
-
-        elif event_type == "user.deleted":
-            await handle_user_deleted(event_data, db)
-
-        return {"status": "success", "message": f"Event {event_type} processed"}
-
+        if event_type in ["organizationMembership.created", "organizationMembership.updated"]:
+            await handle_organization_membership_created(event_data, db)
+        elif event_type == "organizationMembership.deleted":
+            await handle_organization_membership_deleted(event_data, db)
+        elif event_type in ["user.created", "user.updated"]:
+            await handle_clerk_user_created(event_data, db)
+        else:
+            logger.warning(f"Unhandled Clerk event type: {event_type}")
     except json.JSONDecodeError:
+        logger.error(f"Invalid JSON payload", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid JSON payload"
         )
     except Exception as e:
+        logger.exception(f"Error processing Clerk webhook: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error processing webhook: {str(e)}",
         )
+    
+    logger.info(f"Processed Clerk webhook: {event_type}")
+    return {"status": "success", "message": f"Event {event_type} processed"}
 
 
-async def handle_user_created(event_data: dict, db: AsyncSession):
-    """Handle user.created event from Clerk"""
+async def handle_organization_membership_created(event_data: dict, db: AsyncSession):
+    data = event_data['data']
+    if data['organization']['id'] != CLERK_TENSORBLOCK_ORGANIZATION_ID:
+        logger.warning(f"Received organization membership created event for non-TensorBlock organization: {data['organization']['id']}")
+        return
+    
+    clerk_user_id = data['public_user_data']['user_id']
+    role = data['role']
+    if role != "org:admin":
+        # delete from admin users table, if present
+        await db.execute(delete(AdminUsers).where(AdminUsers.user_id.in_(select(User.id).where(User.clerk_user_id == clerk_user_id))))
+    else:
+        # insert into admin users table, if not already present
+        await db.execute(insert(AdminUsers).from_select(['user_id'], select(User.id).where(User.clerk_user_id == clerk_user_id)).on_conflict_do_nothing())
+    await db.commit()
+
+
+async def handle_organization_membership_deleted(event_data: dict, db: AsyncSession):
+    data = event_data['data']
+    if data['organization']['id'] != CLERK_TENSORBLOCK_ORGANIZATION_ID:
+        logger.warning(f"Received organization membership deleted event for non-TensorBlock organization: {data['organization']['id']}")
+        return
+    
+    clerk_user_id = data['public_user_data']['user_id']
+    # delete from admin users table, if present
+    await db.execute(delete(AdminUsers).where(AdminUsers.user_id.in_(select(User.id).where(User.clerk_user_id == clerk_user_id))))
+    await db.commit()
+
+
+async def handle_clerk_user_created(event_data: dict, db: AsyncSession):
+    data = event_data['data']
+    clerk_user_id = data['id']
+
+    # extract the primary email address
+    if not data.get('primary_email_address_id') or not data.get('email_addresses'):
+        logger.error(f"No primary email address or email addresses found for user {clerk_user_id}")
+        raise HTTPException(status_code=400, detail="No primary email address or email addresses found for user")
+    
+    email = None
+    primary_email_address_id = data['primary_email_address_id']
+    for email_address in data['email_addresses']:
+        if email_address['id'] == primary_email_address_id:
+            email = email_address['email_address']
+            break
+    
+    if not email:
+        logger.error(f"No email address found for user {clerk_user_id}")
+        raise HTTPException(status_code=400, detail="No email address found for user")
+    
+    # upsert user record
     try:
-        clerk_user_id = event_data.get("id")
-        email = event_data.get("email_addresses", [{}])[0].get("email_address", "")
-        username = (
-            event_data.get("username")
-            or event_data.get("first_name", "")
-            or email.split("@")[0]
-        )
-
-        logger.info(f"Creating user from Clerk webhook: {username} ({email})")
-
-        # Check if user already exists by clerk_user_id
         result = await db.execute(
-            select(User).filter(User.clerk_user_id == clerk_user_id)
+            insert(User).values(
+                email=email,
+                username=email,  # Use email as username
+                clerk_user_id=clerk_user_id,
+                is_active=True,
+                hashed_password="",  # Clerk handles authentication
+            ).on_conflict_do_update(
+                index_elements=[User.clerk_user_id],
+                set_=dict(
+                    email=email,
+                    username=email,
+                    is_active=True,
+                    hashed_password="",  # Clerk handles authentication
+                )
+            ).returning(User.id)
         )
-        user = result.scalar_one_or_none()
-        if user:
-            logger.info(f"User {username} already exists with Clerk ID")
-            return
-
-        # Check if user exists with this email
-        result = await db.execute(
-            select(User).filter(User.email == email)
-        )
-        existing_user = result.scalar_one_or_none()
-        if existing_user:
-            # Link existing user to Clerk ID
-            existing_user.clerk_user_id = clerk_user_id
-            await db.commit()
-            logger.info(f"Linked existing user {existing_user.username} to Clerk ID")
-            return
-
-        # Create new user
-        user = User(
-            username=username,
-            email=email,
-            clerk_user_id=clerk_user_id,
-            is_active=True,
-            hashed_password="",  # Clerk handles authentication
-        )
-        db.add(user)
+        user_id = result.scalar_one()
+        await create_default_tensorblock_provider_for_user(user_id, db)
         await db.commit()
-        await db.refresh(user)
-
-        # Create default provider for the user
-        create_default_tensorblock_provider_for_user(user.id, db)
-
-        logger.info(f"Successfully created user {username} with ID {user.id}")
-
-    except Exception as e:
-        await db.rollback()
-        logger.error(f"Failed to create user from webhook: {e}", exc_info=True)
-        raise
-
-
-async def handle_user_updated(event_data: dict, db: AsyncSession):
-    """Handle user.updated event from Clerk"""
-    try:
-        clerk_user_id = event_data.get("id")
-        email = event_data.get("email_addresses", [{}])[0].get("email_address", "")
-        username = (
-            event_data.get("username")
-            or event_data.get("first_name", "")
-            or email.split("@")[0]
-        )
-
-        logger.info(f"Updating user from Clerk webhook: {username} ({email})")
-
-        result = await db.execute(
-            select(User).filter(User.clerk_user_id == clerk_user_id)
-        )
-        user = result.scalar_one_or_none()
-        if not user:
-            logger.warning(f"User with Clerk ID {clerk_user_id} not found for update")
-            return
-
-        # Update user information
-        user.username = username
-        user.email = email
-        await db.commit()
-
-        logger.info(f"Successfully updated user {username}")
-
-    except Exception as e:
-        await db.rollback()
-        logger.error(f"Failed to update user from webhook: {e}", exc_info=True)
-        raise
-
-
-async def handle_user_deleted(event_data: dict, db: AsyncSession):
-    """Handle user.deleted event from Clerk"""
-    try:
-        clerk_user_id = event_data.get("id")
-
-        logger.info(f"Deleting user from Clerk webhook: {clerk_user_id}")
-
-        result = await db.execute(
-            select(User).filter(User.clerk_user_id == clerk_user_id)
-        )
-        user = result.scalar_one_or_none()
-        if not user:
-            logger.warning(f"User with Clerk ID {clerk_user_id} not found for deletion")
-            return
-
-        # Deactivate user instead of deleting to preserve data integrity
-        user.is_active = False
-        await db.commit()
-
-        logger.info(f"Successfully deactivated user {user.username}")
-
-    except Exception as e:
-        await db.rollback()
-        logger.error(f"Failed to delete user from webhook: {e}", exc_info=True)
-        raise
+    except IntegrityError:
+        logger.exception("Error upserting user record for clerk user")
+        raise HTTPException(status_code=400, detail="Error upserting user record for clerk user")
+    
+    logger.info(f"Upserted user record for clerk user {clerk_user_id}/{email}")
 
 
 @router.post("/stripe")
@@ -347,13 +285,14 @@ async def handle_payment_succeeded(event: dict, db: AsyncSession):
         
         logger.info(f"Payment succeeded: {amount_decimal} {currency} for customer {user_id}")
         
-        await WalletService.adjust(
+        result = await WalletService.adjust(
             db, 
             user_id, 
             amount_decimal, 
             f"deposit:stripe:{session_id}", 
             currency
         )
+        assert result.get("success"), f"Failed to adjust wallet balance for user {user_id}: {result.get('reason')}"
         
     except Exception as e:
         logger.error(f"Failed to process payment success: {e}", exc_info=True)

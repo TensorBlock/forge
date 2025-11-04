@@ -22,7 +22,10 @@ async def create_user(
     user_in: UserCreate, db: AsyncSession = Depends(get_async_db)
 ) -> Any:
     """
-    Create a new user.
+    Create a new user for cli usage.
+
+    This is a deprecated endpoint and should not be used in staging/production.
+    Users should be created via the Clerk webhook.
     """
     # Check if email already exists
     result = await db.execute(
@@ -52,7 +55,6 @@ async def create_user(
         hashed_password=hashed_password,
     )
     db.add(db_user)
-    await db.commit()
     await db.refresh(db_user)
 
     # Create default TensorBlock provider for the new user
@@ -66,7 +68,7 @@ async def create_user(
                 "error": str(e),
             }
         })
-
+    await db.commit()
     return db_user
 
 
@@ -86,6 +88,9 @@ async def read_user_me(
     else:
         user_data["forge_api_keys"] = []
 
+    if current_user.admin_users:
+        user_data["is_admin"] = True
+
     return MaskedUser(**user_data)
 
 
@@ -103,6 +108,9 @@ async def read_user_me_clerk(
         ]
     else:
         user_data["forge_api_keys"] = []
+
+    if current_user.admin_users:
+        user_data["is_admin"] = True
 
     return MaskedUser(**user_data)
 

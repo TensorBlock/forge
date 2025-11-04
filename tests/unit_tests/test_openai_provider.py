@@ -6,10 +6,12 @@ from unittest.mock import patch
 from app.services.providers.openai_adapter import OpenAIAdapter
 from tests.unit_tests.utils.helpers import (
     ClientSessionMock,
-    validate_chat_completion_response,
     OPENAAI_STANDARD_CHAT_COMPLETION_RESPONSE,
+    OPENAI_STANDARD_RESPONSES_RESPONSE,
+    validate_chat_completion_response,
     process_openai_streaming_response,
     validate_chat_completion_streaming_response,
+    validate_responses_response,
 )
 
 CURRENT_DIR = os.path.dirname(__file__)
@@ -29,6 +31,11 @@ with open(
     "r",
 ) as f:
     MOCK_CHAT_COMPLETION_STREAMING_RESPONSE_DATA = json.load(f)
+
+with open(
+    os.path.join(CURRENT_DIR, "assets", "openai", "responses_response_1.json"), "r"
+) as f:
+    MOCK_RESPONSES_RESPONSE_DATA = json.load(f)
 
 with open(
     os.path.join(CURRENT_DIR, "assets", "openai", "embeddings_response.json"), "r"
@@ -112,6 +119,28 @@ class TestOpenAIProvider(TestCase):
                 result,
                 expected_model="gpt-4o-mini-2024-07-18",
                 expected_message=OPENAAI_STANDARD_CHAT_COMPLETION_RESPONSE,
+            )
+    
+    async def test_responses(self):
+        payload = {
+            "model": "gpt-4o-mini",
+            "messages": [{"input": "Hello, how are you?"}],
+            "stream": False,
+        }
+        with patch("aiohttp.ClientSession", ClientSessionMock()) as mock_session:
+            mock_session.responses = [
+                (MOCK_RESPONSES_RESPONSE_DATA, 200)
+            ]
+
+            # Call the method
+            result = await self.adapter.process_responses(
+                api_key=self.api_key, payload=payload, endpoint="responses"
+            )
+            # Assert the result contains the expected model IDs
+            validate_responses_response(
+                result,
+                expected_model="gpt-4o-mini-2024-07-18",
+                expected_message=OPENAI_STANDARD_RESPONSES_RESPONSE,
             )
 
     async def test_process_embeddings(self):
