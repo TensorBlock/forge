@@ -23,6 +23,7 @@ from app.core.logger import get_logger
 from app.models.forge_api_key import ForgeApiKey
 from app.models.user import User
 from app.services.provider_service import ProviderService
+from app.api.routes import wrap_streaming_response_with_error_handling
 
 router = APIRouter()
 logger = get_logger(name="proxy")
@@ -96,23 +97,15 @@ async def create_chat_completion(
 
         # Check if it's a streaming response by checking if it's an async generator
         if inspect.isasyncgen(response):
-            # Set appropriate headers for streaming
-            headers = {
-                "Content-Type": "text/event-stream",
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",  # Prevent Nginx buffering
-            }
-
-            return StreamingResponse(
-                response, media_type="text/event-stream", headers=headers
-            )
+            return await wrap_streaming_response_with_error_handling(logger, response)
 
         # Otherwise, return the JSON response directly
         return response
     except ValueError as err:
         logger.exception(f"Error processing chat completion request: {str(err)}")
         raise HTTPException(status_code=400, detail=str(err)) from err
+    except HTTPException as err:
+        raise err
     except Exception as err:
         logger.exception(f"Error processing chat completion request: {str(err)}")
         raise HTTPException(
@@ -144,16 +137,7 @@ async def create_completion(
 
         # Check if it's a streaming response
         if inspect.isasyncgen(response):
-            headers = {
-                "Content-Type": "text/event-stream",
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",  # Prevent Nginx buffering
-            }
-
-            return StreamingResponse(
-                response, media_type="text/event-stream", headers=headers
-            )
+            return await wrap_streaming_response_with_error_handling(logger, response)
 
         # Otherwise, return the JSON response directly
         return response
@@ -309,16 +293,7 @@ async def create_responses(
 
         # Check if it's a streaming response
         if inspect.isasyncgen(response):
-            headers = {
-                "Content-Type": "text/event-stream",
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",  # Prevent Nginx buffering
-            }
-
-            return StreamingResponse(
-                response, media_type="text/event-stream", headers=headers
-            )
+            return await wrap_streaming_response_with_error_handling(logger, response)
 
         # Otherwise, return the JSON response directly
         return response

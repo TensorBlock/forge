@@ -690,21 +690,21 @@ class ProviderService:
                 # re-calculate output tokens
                 output_tokens = max(output_tokens, total_tokens - input_tokens)
 
-            asyncio.create_task(
-                update_usage_in_background(
-                    usage_tracker_id,
-                    input_tokens,
-                    output_tokens,
-                    cached_tokens,
-                    reasoning_tokens,
+            if input_tokens > 0 or output_tokens > 0:
+                asyncio.create_task(
+                    update_usage_in_background(
+                        usage_tracker_id,
+                        input_tokens,
+                        output_tokens,
+                        cached_tokens,
+                        reasoning_tokens,
+                    )
                 )
-            )
             return result
         else:
             # For streaming responses, wrap the generator to count tokens
             async def token_counting_stream() -> AsyncGenerator[bytes, None]:
-                approximate_input_tokens = 0
-                approximate_output_tokens = 0
+                update_usage = True
                 output_tokens = 0
                 input_tokens = 0
                 total_tokens = 0
@@ -719,13 +719,6 @@ class ProviderService:
                 )
 
                 messages = payload.get("messages", [])
-
-                # Rough estimate of input tokens based on message length
-                for msg in messages:
-                    content = msg.get("content", "")
-                    if isinstance(content, str):
-                        # Rough approximation: 4 chars ~= 1 token
-                        approximate_input_tokens += len(content) // 4
 
                 try:
                     async for chunk in result:
@@ -767,21 +760,6 @@ class ProviderService:
 
                                         # re-calculate output tokens
                                         output_tokens = max(output_tokens, total_tokens - input_tokens)
-
-                                    # Extract content from the chunk based on OpenAI format
-                                    if "choices" in data:
-                                        for choice in data["choices"]:
-                                            if (
-                                                "delta" in choice
-                                                and "content" in choice["delta"]
-                                            ):
-                                                content = choice["delta"]["content"]
-                                                # Only count tokens if we don't have final usage data
-                                                if content:
-                                                    # Count tokens in content (approx)
-                                                    approximate_output_tokens += (
-                                                        len(content) // 4
-                                                    )
                                 except json.JSONDecodeError:
                                     # If JSON parsing fails, just continue
                                     pass
@@ -799,6 +777,7 @@ class ProviderService:
                         "Error in streaming response: {}", str(e), exc_info=True
                     )
                     # Re-raise to propagate the error
+                    update_usage = False
                     raise
                 finally:
                     logger.debug(
@@ -807,15 +786,16 @@ class ProviderService:
                         f"output_tokens={output_tokens}, cached_tokens={cached_tokens}, reasoning_tokens={reasoning_tokens}"
                     )
 
-                    asyncio.create_task(
-                        update_usage_in_background(
-                            usage_tracker_id,
-                            input_tokens or approximate_input_tokens,
-                            output_tokens or approximate_output_tokens,
-                            cached_tokens,
-                            reasoning_tokens,
+                    if update_usage and (input_tokens > 0 or output_tokens > 0):
+                        asyncio.create_task(
+                            update_usage_in_background(
+                                usage_tracker_id,
+                                input_tokens,
+                                output_tokens,
+                                cached_tokens,
+                                reasoning_tokens,
+                            )
                         )
-                    )
 
             return token_counting_stream()
 
