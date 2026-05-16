@@ -49,5 +49,5 @@ USER nobody
 # Expose port
 EXPOSE 8000
 
-# Use Gunicorn config so worker lifecycle settings are explicit and env-overridable.
-CMD ["gunicorn", "app.main:app", "--config", "gunicorn_conf.py"]
+# Use environment variable for workers count and optimize for database connections
+CMD ["sh", "-c", "gunicorn app.main:app -k uvicorn.workers.UvicornWorker --workers ${WORKERS:-5} --bind 0.0.0.0:8000 --timeout 120 --max-requests 1000 --max-requests-jitter 100"]
