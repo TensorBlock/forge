@@ -89,22 +89,6 @@ async def _create_provider_key_internal(
     """
     Internal logic to create a new provider key for the current user.
     """
-    # Check if provider already exists for user
-    result = await db.execute(
-        select(ProviderKeyModel).filter(
-            ProviderKeyModel.user_id == current_user.id,
-            ProviderKeyModel.provider_name == provider_key_create.provider_name,
-            ProviderKeyModel.deleted_at == None,
-        )
-    )
-    existing_key = result.scalar_one_or_none()
-    
-    if existing_key:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Provider key for {provider_key_create.provider_name} already exists",
-        )
-    
     db_provider_key = await _process_provider_key_create_data(db, provider_key_create, current_user.id)
     await db.commit()
     await db.refresh(db_provider_key)
@@ -140,7 +124,7 @@ async def _process_provider_key_update_data(
 
 
 async def _update_provider_key_internal(
-    provider_name: str,
+    provider_key_id: int,
     provider_key_update: ProviderKeyUpdate,
     db: AsyncSession,
     current_user: UserModel,
@@ -150,7 +134,7 @@ async def _update_provider_key_internal(
     """
     result = await db.execute(
         select(ProviderKeyModel).filter(
-            ProviderKeyModel.provider_name == provider_name,
+            ProviderKeyModel.id == provider_key_id,
             ProviderKeyModel.user_id == current_user.id,
             ProviderKeyModel.deleted_at == None,
         )
@@ -173,12 +157,12 @@ async def _update_provider_key_internal(
 
 async def _process_provider_key_delete_data(
     db: AsyncSession,
-    provider_name: str,
+    provider_key_id: int,
     user_id: int,
 ) -> ProviderKeyModel:
     result = await db.execute(
         select(ProviderKeyModel).filter(
-            ProviderKeyModel.provider_name == provider_name,
+            ProviderKeyModel.id == provider_key_id,
             ProviderKeyModel.user_id == user_id,
             ProviderKeyModel.deleted_at == None,
         )
@@ -206,12 +190,12 @@ async def _process_provider_key_delete_data(
 
 
 async def _delete_provider_key_internal(
-    provider_name: str, db: AsyncSession, current_user: UserModel
+    provider_key_id: int, db: AsyncSession, current_user: UserModel
 ) -> ProviderKey:
     """
     Internal logic to delete a provider key for the current user.
     """
-    provider_key_data, scoped_forge_api_keys = await _process_provider_key_delete_data(db, provider_name, current_user.id)
+    provider_key_data, scoped_forge_api_keys = await _process_provider_key_delete_data(db, provider_key_id, current_user.id)
     await db.commit()
 
     # Invalidate caches after deleting a provider key
@@ -241,25 +225,25 @@ async def create_provider_key(
     return await _create_provider_key_internal(provider_key_create, db, current_user)
 
 
-@router.put("/{provider_name}", response_model=ProviderKey)
+@router.put("/{provider_key_id}", response_model=ProviderKey)
 async def update_provider_key(
-    provider_name: str,
+    provider_key_id: int,
     provider_key_update: ProviderKeyUpdate,
     db: AsyncSession = Depends(get_async_db),
     current_user: UserModel = Depends(get_current_active_user),
 ) -> Any:
     return await _update_provider_key_internal(
-        provider_name, provider_key_update, db, current_user
+        provider_key_id, provider_key_update, db, current_user
     )
 
 
-@router.delete("/{provider_name}", response_model=ProviderKey)
+@router.delete("/{provider_key_id}", response_model=ProviderKey)
 async def delete_provider_key(
-    provider_name: str,
+    provider_key_id: int,
     db: AsyncSession = Depends(get_async_db),
     current_user: UserModel = Depends(get_current_active_user),
 ) -> Any:
-    return await _delete_provider_key_internal(provider_name, db, current_user)
+    return await _delete_provider_key_internal(provider_key_id, db, current_user)
 
 
 # --- Clerk API Routes ---
@@ -282,25 +266,25 @@ async def create_provider_key_clerk(
     return await _create_provider_key_internal(provider_key_create, db, current_user)
 
 
-@router.put("/clerk/{provider_name}", response_model=ProviderKey)
+@router.put("/clerk/{provider_key_id}", response_model=ProviderKey)
 async def update_provider_key_clerk(
-    provider_name: str,
+    provider_key_id: int,
     provider_key_update: ProviderKeyUpdate,
     db: AsyncSession = Depends(get_async_db),
     current_user: UserModel = Depends(get_current_active_user_from_clerk),
 ) -> Any:
     return await _update_provider_key_internal(
-        provider_name, provider_key_update, db, current_user
+        provider_key_id, provider_key_update, db, current_user
     )
 
 
-@router.delete("/clerk/{provider_name}", response_model=ProviderKey)
+@router.delete("/clerk/{provider_key_id}", response_model=ProviderKey)
 async def delete_provider_key_clerk(
-    provider_name: str,
+    provider_key_id: int,
     db: AsyncSession = Depends(get_async_db),
     current_user: UserModel = Depends(get_current_active_user_from_clerk),
 ) -> Any:
-    return await _delete_provider_key_internal(provider_name, db, current_user)
+    return await _delete_provider_key_internal(provider_key_id, db, current_user)
 
 
 # --- Batch Upsert API Endpoint ---
@@ -323,19 +307,19 @@ async def _batch_upsert_provider_keys_internal(
     )
     existing_keys_query = result.scalars().all()
     # 2. Map them by provider_name for efficient lookup
-    existing_keys_map: dict[str, ProviderKeyModel] = {
-        key.provider_name: key for key in existing_keys_query
+    existing_keys_map: dict[int, ProviderKeyModel] = {
+        key.id: key for key in existing_keys_query
     }
     invalidated_forge_api_keys = set()
 
     for item in items:
         try:
-            existing_provider_key: ProviderKeyModel | None = existing_keys_map.get(item.provider_name)
+            existing_provider_key: ProviderKeyModel | None = existing_keys_map.get(item.id)
 
             # Handle deletion if api_key is "DELETE"
             if item.api_key == "DELETE":
                 if existing_provider_key:
-                    _, scoped_forge_api_keys = await _process_provider_key_delete_data(db, item.provider_name, current_user.id)
+                    _, scoped_forge_api_keys = await _process_provider_key_delete_data(db, item.id, current_user.id)
                     invalidated_forge_api_keys.update(scoped_forge_api_keys)
                     processed = True
             elif existing_provider_key:  # Update existing key
